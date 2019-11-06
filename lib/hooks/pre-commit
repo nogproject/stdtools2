@@ -1,0 +1,120 @@
+#!/bin/bash
+
+cfg_max_size=40000
+cfg_accepted_growth_pct=5  # 5% growth ok.
+
+deny=0
+
+# git uses quoting if a path contains special characters.  A quoted path starts
+# with a double quote and contains \... sequences that can be converted with
+# printf's special format specifier '%b'.  Eval is used, because the path
+# string itself contains double quotes.
+unquotePath() {
+    local p="$1"
+    if [ "${p:0:1}" = '"' ]; then
+        eval printf '%b' ${p}
+    else
+        printf '%s' "${p}"
+    fi
+}
+
+if ! ini=$(git config user.initials); then
+    echo >&2 "$0: Denying commit: missing config \`user.initials\`."
+    deny=1
+elif ! ref="$(git symbolic-ref HEAD 2>/dev/null)"; then
+    echo >&2 "$0: info: Skipped branch name check: symbolic-ref HEAD failed."
+elif [[ ${ref} =~ ^refs/heads/p/.*$ ]]; then
+    true  # silently allow commit to p/ branch.
+elif [[ ${ref} =~ ^refs/heads/${ini}/ ]]; then
+    true  # silently allow commit to initials branch.
+elif allowCommitRef="$(git config tools.allowcommitref)" && [[ ${ref} =~ ^${allowCommitRef}$ ]]; then
+    echo >&2 "$0: Allowing commit to \`${ref}\` due to config \`tools.allowcommit=${allowCommitRef}\`."
+elif allowCommitRef="$(git config stdtools.allowcommitref)" && [[ ${ref} =~ ^${allowCommitRef}$ ]]; then
+    echo >&2 "$0: Allowing commit to \`${ref}\` due to config \`stdtools.allowcommit=${allowCommitRef}\`."
+elif [[ ${ref} =~ ^refs/heads/t[0-9]*$ ]]; then
+    echo >&2 "$0: Allowing commit to special ref \`${ref}\`."
+else
+    echo >&2 "$0: Denying commit: ref neither starts with \`refs/heads/${ini}/\` nor matches another allow rule.  Note: You can explicitly allow branches by setting \`git config tools.allowcommitref refs/heads/<extended-regex>\`."
+    deny=1
+fi
+
+# Check size of changed files.  Accept small files.  Also accept moderate
+# growth, which is useful for files such as LOG.md.
+#
+# Use diff-index with --no-renames to keep the check quick.
+while read -r oldMode newMode oldSha1 newSha1 _ path; do
+    [ -z "${path}" ] && continue
+
+    if [ ${newSha1} = "0000000000000000000000000000000000000000" ]; then
+        true  # Ignore deleted files.
+    elif [ ${newMode} = "160000" ]; then
+        true  # Ignore submodules.
+    else
+        newSize=$(git cat-file -s "${newSha1}")
+        if [ ${oldSha1} = "0000000000000000000000000000000000000000" ] ||
+            [ ${oldMode} = "160000" ]; then
+            oldSize=0  # If no old file or old file is a submodule.
+        else
+            oldSize=$(git cat-file -s "${oldSha1}")
+        fi
+        if [ ${newSize} -lt $((${oldSize} * (${cfg_accepted_growth_pct} + 100) / 100)) ]; then
+            true  # Accept moderate growth, e.g. of LOG.md.
+        elif [ ${newSize} -gt ${cfg_max_size} ]; then
+            echo >&2 "$0: Denying commit, '${path}' is larger than ${cfg_max_size} Bytes, and it grew by more than ${cfg_accepted_growth_pct}%."
+            deny=1
+        fi
+    fi
+done <<< "$(git diff-index --cached --no-renames HEAD)"
+
+# Check mode changes and reject if a file gets an x-bit.  Executables are
+# rarely committed, and we observed many accidental x-bits on Windows, so they
+# need to be explicitly confirmed.
+#
+# Use diff-index with --no-renames to keep the check quick.
+while read -r oldMode newMode _ _ _ fileName; do
+    [ -z "${oldMode}" ] && continue
+
+    oldMode="$(cut -b 2- <<< "$oldMode")"
+
+    if [ $oldMode = 000000 ]; then
+        if [[ $newMode = *7* ]]; then
+            echo >&2 "$0: Denying commit, '$fileName' has x-bit."
+            deny=1
+        fi
+    elif [ $newMode = 000000 ]; then
+        true  # Ignore deleted files.
+    elif [[ "$oldMode" -ne "$newMode" ]]; then
+        echo >&2 "$0: Denying commit, permissions for '$fileName' have changed."
+        deny=1
+    fi
+done <<< "$(git diff-index --cached --no-renames HEAD)"
+
+# Check that file extensions are all lowercase to avoid problems with silo.  We
+# use lowercase extensions in `.gitattributes`, which would not match uppercase
+# extensions on Linux but would match on Mac and Windows, which have
+# case-insensitive filesystems.
+#
+# Use diff-index with --no-renames to keep the check quick.
+while read -r _ _ _ _ _ path; do
+    [ -z "${path}" ] && continue
+    path=$(unquotePath "${path}")
+
+    # Use bash regex instead of grep to keep the check as quick as possible.
+    base="$(basename -- "${path}")"
+    ext=${base##*.}
+    if [[ ${ext} = ${base} ]]; then
+        true  # no extension
+    elif [[ ${ext} = 'R' ]]; then
+        true  # Special case: .R uses uppercase.
+    elif [[ ${ext} = 'r' ]]; then
+        echo >&2 "$0: Denying commit; '${path}' has an invalid extension 'r'; it should be 'R'."
+        deny=1
+    elif [[ ${ext} =~ ^[a-z0-9]*$ ]]; then
+        true  # all-lower-case extension ok.
+    else
+        echo >&2 "$0: Denying commit; '${path}' has an invalid extension '${ext}', probably with uppercase letters."
+        deny=1
+    fi
+done <<< "$(git diff-index --cached --no-renames HEAD)"
+
+exit $deny

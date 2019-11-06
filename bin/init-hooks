@@ -1,0 +1,65 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+toolsdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)
+source "${toolsdir}/lib/lib.sh"
+
+hooksdir="${toolsdir}/lib/hooks"
+hooks=(
+    pre-commit
+)
+
+usage() {
+    cat <<\EOF
+Usage:
+  init-hooks
+
+`init-hooks` installs Git hooks in the current Git working copy and its
+recursive submodules.
+EOF
+}
+
+main() {
+    argparse "$@"
+
+    echo '    HOOKS'
+    ( echo '.' && lsActiveSubmodulesRecursive ) \
+    | while read -r dir; do (
+        cd "${dir}"
+        updateHooks
+    ) done
+}
+
+argparse() {
+    while [ $# -ge 1 ]; do
+        case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            break
+            ;;
+        esac
+    done
+}
+
+updateHooks() {
+    gitdir="$(git rev-parse --git-dir)"
+    mkdir -p "${gitdir}/hooks"
+    for h in "${hooks[@]}"; do
+        src="${hooksdir}/${h}"
+        dst="${gitdir}/hooks/${h}"
+        if ! [ -e "${dst}" ]; then
+            echo "    CP hook '${dst}' (was missing)"
+            cp "${src}" "${dst}"
+        elif ! diff -q "${dst}" "${src}" >/dev/null; then
+            echo "    UPDATE hook '${dst}' (see diff below)"
+            diff -u "${dst}" "${src}" || true
+            cp "${src}" "${dst}"
+        fi
+    done
+}
+
+main "$@"

@@ -73,6 +73,10 @@ cfg_projects() {
     die 'Missing stdhostprojects; set it with `git config --global stdtools.stdhostprojects <path>`.'
 }
 
+lsActiveSubmodulesRecursive() {
+    git submodule foreach --recursive 'true' | cut -d "'" -f 2
+}
+
 # `getRepoCommonName2()` tries to determine the full name of the repo in the
 # current working directory from its remote URL.  It prints 'unknown' if the
 # remote URL is not available.
