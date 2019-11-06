@@ -18,6 +18,70 @@ esac
 cfg_exit_ok=44
 cfg_exit_err=1
 
+# We use `LC_ALL=C` to ensure that sort behaves as expected when sorting files;
+# the expected sort order is '.git/ .git/HEAD .gitignore'.  See
+# <https://unix.stackexchange.com/a/87763> for other things that may be
+# unexpected without `LC_ALL=C`.
+#
+# `LC_ALL=C` unfortunately also configures Python to use ASCII when encoding
+# filenames; see Python documentation `sys.getfilesystemencoding`,
+# <https://docs.python.org/3/library/sys.html#sys.getfilesystemencoding>.  But
+# we do want to use UTF-8 there.  So we set `export LC_ALL=en_US.UTF-8` before
+# calling programs that are implemented in Python.  Most programs that are
+# known to be affected are helpers like `git lfs-x`, which are executed via
+# `git <program>` and never directly as `git-<program>`.  So it is sufficient
+# to wrap `git()`.  One exception is `lib/call/dedup_global`, which explicitly
+# sets `LC_ALL`.
+#
+# # Rejected Alternatives
+#
+# We could leave the environment unmodified, assuming that it is configured to
+# UTF-8 on Linux, and instead set `LC_ALL=C` only for individual operations
+# when we known that we need to control the environment, e.g. when calling
+# `sort`.  This alternative could work in principle, but it would be difficult
+# to implement, because the entire stdtools codebase would need to be reviewed.
+#
+# We could change Python implementation to preserve bytes on Linux.  Instead of
+# decoding paths from external programs, like `git ls-files -z`, they bytes
+# could be preserved and later passed to `os` functions.  The Python
+# implementation would become independent of the encoding by completely avoid
+# it.  The approach, however, may cause problems on Window and Mac, which use
+# Unicode for file paths.  See:
+# <https://docs.python.org/3/library/sys.html#sys.getfilesystemencoding> and
+# <https://www.python.org/dev/peps/pep-0529/>.  The Python recommendation is to
+# use `str` for paths.  We follow it.
+
+# Enforce byte sorting, as discussed above.
+export LC_ALL=C
+
+# Ensure Python uses UTF-8 paths, as discussed above.
+git() {
+    ( export LC_ALL=en_US.UTF-8 && exec 'git' "$@" )
+}
+
+# Two separate lists for Python modules and Pip requirements, since there is no
+# one-to-one correspondence.
+requiredPythonModules='
+    attr
+    dateutil
+    docopt
+    requests
+'
+pipRequirements='
+    attrs
+    dateutils
+    docopt
+    requests
+'
+
+# The expected tool versions; used when checking the environment.
+expectedLfsTransferSshSemver='0.4.0'
+expectedLfsStandaloneTransferSshSemver='0.4.0'
+
+# `opt_global_skip_*` can be used to globally disable LFS code paths.  The
+# mechanism will be incrementally implement over time.
+opt_global_skip_lfs_ssh=
+
 cfg_stdhost() {
     local h
 
@@ -71,6 +135,153 @@ cfg_projects() {
     fi
 
     die 'Missing stdhostprojects; set it with `git config --global stdtools.stdhostprojects <path>`.'
+}
+
+cfg_releases() {
+    echo 'releases'
+}
+
+# `activateToolsEnv` activates the environment without slow sanity checks.
+#
+# `activateToolsEnvChecked` does the same but with additional sanity checks to
+# confirm that the tools from the bundled bin dirs work as expected.
+#
+# The sanity checks may take up to 2 seconds.  Fast commands, therefore, may
+# skip them.
+#
+# The `activate*` functions can only be used locally, and must not be used in
+# `lib/call/` remote code.
+activateToolsEnv() {
+    checkToolsdirVar
+    checkUserGitconfig
+    activateBundledBindirs
+}
+
+activateToolsEnvChecked() {
+    checkPython3
+    activateToolsEnv
+    checkGitLfsTransferToolsStandalone
+}
+
+checkToolsdirVar() {
+    if [ -z "${toolsdir:-}" ]; then
+        die "\`toolsdir\` is unset."
+    fi
+}
+
+# `activateBundledBindirs` ensures that the bundled `bin/` dirs are active.
+# `lib.sh` does not directly modify the path on loading, since the lib source
+# is also used during remote calls, when `toolsdir` might be meaningless.
+# `main()` must call `activateToolsdirBinPaths` if it later relies on the tools
+# from the bin dirs.
+activateBundledBindirs() {
+    local prefix p
+    prefix=
+    for sub in git-lfs-transfer git-lfs-x; do
+        p="${toolsdir}/${sub}"
+        if [ -d "${p}" ]; then
+            prefix="${p}:${prefix}"
+            continue
+        fi
+        # Also try side-by-side directory layout.
+        p="$(realpath "${toolsdir}/../${sub}")"
+        if [ -d "${p}" ]; then
+            prefix="${p}:${prefix}"
+            continue
+        fi
+    done
+    if [ "${PATH#${prefix}}" = "${PATH}" ]; then
+        PATH="${prefix}${PATH}"
+    fi
+}
+
+# `isActiveLfsSsh` is true if the repo contains LFS filter attributes and LFS
+# SSH is not globally disabled.
+isActiveLfsSsh() {
+    if test ${opt_global_skip_lfs_ssh}; then
+        return 1
+    fi
+    isConfiguredLfsSsh
+}
+
+# There is no special configuration for LFS SSH transfer.  LFS attributes alone
+# are sufficient indication that it can be used.
+isConfiguredLfsSsh() {
+    gitattributesContainLfs
+}
+
+gitattributesContainLfs() {
+    local gitattributes
+    gitattributes="$(git rev-parse --show-toplevel)/.gitattributes"
+    if ! [ -e "${gitattributes}" ]; then
+        return 1
+    fi
+
+    if ! grep -q 'filter=lfs' "${gitattributes}"; then
+        return 1
+    fi
+
+    return 0
+}
+
+hasLfsStandaloneTransferUrlPrefixConfig() {
+    git config --get-regexp \
+        '^lfs\.https://'"$(cfg_stdhost)"'/.*\.standalonetransferagent$' '^ssh$' \
+        >/dev/null 2>&1
+}
+
+gitConfigHasAllLfsSshSettings() {
+    if lfsHasStandaloneTransfer; then
+        git config lfs.customtransfer.ssh.path >/dev/null 2>&1 \
+        && hasLfsStandaloneTransferUrlPrefixConfig \
+        && ! git config remote.origin.lfsurl >/dev/null 2>&1
+    else
+        git config lfs.customtransfer.ssh.path >/dev/null 2>&1 \
+        && ! hasLfsStandaloneTransferUrlPrefixConfig \
+        && git config remote.origin.lfsurl >/dev/null 2>&1
+    fi
+}
+
+gitConfigHasAnyLfsSshSetting() {
+    git config remote.origin.lfsurl >/dev/null 2>&1 \
+    || git config lfs.customtransfer.ssh.path >/dev/null 2>&1 \
+    || git config lfs.standalonetransferagent >/dev/null 2>&1
+}
+
+setLfsSshConfig() {
+    setLfsSshConfigStandalone
+}
+
+setLfsSshConfigStandalone() {
+    local url
+    if ! url=$(parseOriginUrlSsh); then
+        die "Failed to parse remote origin URL in \`$(pwd)\` as SSH."
+    fi
+    local host="${url%%:*}"
+    git config lfs.customtransfer.ssh.path git-lfs-standalonetransfer-ssh
+    git config "lfs.https://${host}/.standalonetransferagent" ssh
+    git config --unset remote.origin.lfsurl || true
+}
+
+unsetLfsSshConfig() {
+    local url
+    if ! url=$(parseOriginUrlSsh); then
+        die "Failed to parse remote origin URL in \`$(pwd)\` as SSH."
+    fi
+    git config --unset remote.origin.lfsurl || true
+    git config --unset lfs.customtransfer.ssh.path || true
+    configUnsetLfsStandalone
+}
+
+configUnsetLfsStandalone() {
+    (
+        git config -z --local \
+            --get-regexp '^lfs\..*\.standalonetransferagent$' \
+        || true
+    ) \
+    | while read -r -d '' k v; do
+        git config --local --unset "${k}"
+    done
 }
 
 lsActiveSubmodulesRecursive() {
@@ -315,6 +526,57 @@ egrepEscapePath() {
     sed -e 's/\./[.]/g' <<< "$1"
 }
 
+parseOriginUrlSsh() {
+    local url host path
+    if ! url=$(git config remote.origin.url); then
+        die "Failed to get 'remote.origin.url'."
+    fi
+    case "$url" in
+        ssh://*)
+            host=$(cut -d / -f 3 <<<"${url}")
+            path=/$(cut -d / -f 4- <<<"${url}")
+            ;;
+        *)
+            die "Unsupported remote.origin.url \`${url}\`; expected \`ssh://<host>/...\`."
+            ;;
+    esac
+    # Normalize multiple slashes at beginning of path.
+    path=$(sed -e 's@^//*@/@' <<<"${path}")
+    printf '%s:%s\n' "${host}" "${path}"
+}
+
+haveChanges() {
+    haveStagedChanges || haveUnstagedChanges
+}
+
+haveStagedChanges() {
+    ! git diff-index --quiet --cached HEAD
+}
+
+haveUnstagedChanges() {
+    ! git diff-files --quiet
+}
+
+gitStatusIsClean() {
+    [ -z "$(git status -s)" ]
+}
+
+haveUntrackedFiles() {
+    [ "$(git ls-files --other --exclude-per-directory=.gitignore)" != "" ]
+}
+
+requireIsToplevelDir() {
+    isTopLevelDir || die "Directory '$(pwd)' is not toplevel of working copy."
+}
+
+isInsideWorkTree() {
+    [ "$(git rev-parse --is-inside-work-tree 2>/dev/null)" = "true" ]
+}
+
+isTopLevelDir() {
+    isInsideWorkTree && [ -z "$(git rev-parse --show-prefix 2>/dev/null)" ]
+}
+
 # `exec_ssh` works as `ssh` but uses PuTTY's plink if configured in `GIT_SSH`.
 # Because plink under some conditions returns an exit code 0 even if a
 # connection failed, remote scripts are required to indicate success by exit
@@ -459,4 +721,149 @@ warn() {
 
 exitok() {
     exit ${cfg_exit_ok}
+}
+
+checkRemoteNotDeinit() {
+    local repo
+    case $# in
+    0)
+        repo="$(getRepoCommonName2)"
+        ;;
+    1)
+        repo="$1"
+        ;;
+    esac
+    if ! isValidRepoFullname "${repo}"; then
+        die "Failed to determine repo name for current directory."
+    fi
+    path="$(repoPath "${repo}")"
+
+    callStdhost check-not-deinit "${repo}" "${path}"
+}
+
+checkUserGitconfig() {
+    err=
+    if [ "$(git config --global filter.lfs.clean)" != 'git-lfs clean -- %f' ]; then
+        echo 'Unexpected `filter.lfs.clean`.'
+        err=t
+    fi
+    if [ "$(git config --global filter.lfs.smudge)" != 'git-lfs smudge --skip -- %f' ]; then
+        echo 'Unexpected `filter.lfs.smudge`.'
+        err=t
+    fi
+    if [ "$(git config --global filter.lfs.process)" != 'git-lfs filter-process --skip' ]; then
+        echo 'Unexpected `filter.lfs.process`.'
+        err=t
+    fi
+
+    if ! test ${err}; then
+        return 0
+    fi
+
+    die 'Git LFS is incorrectly configured.  Stdtools require that your
+`~/.gitconfig` LFS section is:
+
+```
+[filter "lfs"]
+    clean = git-lfs clean -- %f
+    smudge = git-lfs smudge --skip -- %f
+    process = git-lfs filter-process --skip
+    required = true
+```
+
+If you have not installed Git LFS before, you can update your `.gitconfig`
+with:
+
+```
+git lfs install --skip-smudge --skip-repo
+```
+
+If you already have installed Git LFS, you need to manually update your
+`.gitconfig`.
+'
+}
+
+checkPython3() {
+    if export | grep PYTHONPATH.*2.7; then
+        echo >&2 'Warning: PYTHONPATH seems to refer to 2.7 libraries (see above), which may cause problems with Python 3.'
+    fi
+
+    if ! python3 -c "$(printf 'import %s;' ${requiredPythonModules})"; then
+        die "Failed to import required Python modules.
+
+One way to to fix this is to install the following pip packages in a default
+Python 3 virtual environment and have it always activated when using Stdtools:
+${pipRequirements}
+On a standard Linux system, you may want to create a virtualenv on a shared
+work filesystem, add a symlink in your HOME directory, and source
+<venv>/bin/activate in your .bashrc in order to have virtualenv set up on all
+department computers.  Do not add the venv to your HOME directly, to avoid
+quota problems.
+"
+    fi
+}
+
+checkGitLfsTransferToolsStandalone() {
+    err=
+    if ! haveExpectedLfsStandaloneTransferSsh; then
+        echo "Wrong git-lfs-standalonetransfer-ssh version, expected ${expectedLfsStandaloneTransferSshSemver}."
+        err=t
+    fi
+
+    if ! test ${err}; then
+        return 0
+    fi
+
+    die 'Wrong Git LFS Transfer tool versions.
+
+To fix this, follow the install instructions in `git-lfs-transfer/README.md`.
+'
+}
+
+haveExpectedLfsStandaloneTransferSsh() {
+    git lfs-standalonetransfer-ssh --version \
+    | grep -q "^git-lfs-standalonetransfer-ssh-${expectedLfsStandaloneTransferSshSemver}"
+}
+
+lfsVersionMajor=
+lfsVersionMinor=
+lfsVersionPatch=
+
+initLfsVersion() {
+    if [ -n "${lfsVersionMajor}" ]; then
+        return
+    fi
+
+    local v
+    if ! v="$(git lfs version)"; then
+        die 'Failed to run `git lfs version`.'
+    fi
+    if ! [[ "${v}" =~ ^git-lfs/[0-9]+\.[0-9]+\..*$ ]]; then
+        die 'Failed to parse Git LFS version.'
+    fi
+    v=${v#git-lfs/}  # Strip prefix.
+    v=${v%% *}  # Strip suffix.
+    lfsVersionMajor=${v%%.*}
+    v=${v#*.}  # Strip from start to first dot.
+    lfsVersionMinor=${v%%.*}
+    v=${v#*.}  # Strip from start to first dot.
+    lfsVersionPatch=${v}
+}
+
+# LFS >= 2.3.1.
+lfsHasStandaloneTransfer() {
+    initLfsVersion
+    local M=${lfsVersionMajor}
+    local m=${lfsVersionMinor}
+    local p=${lfsVersionPatch}
+    if [ $M -ge 3 ]; then
+        return 0
+    fi
+    if [ $M -eq 2 ] && [ $m -ge 4 ]; then
+        return 0
+    fi
+    if [ $M -eq 2 ] && [ $m -eq 3 ] && [ $p -ge 1 ]; then
+        return 0
+    fi
+    return 1
 }

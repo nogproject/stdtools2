@@ -1,0 +1,33 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+repo="$1"
+repoDir="$2"
+
+cd "${repoDir}"
+if [ -e '.git' ]; then
+    exitok
+fi
+
+cd '..'
+subdir="$(basename "${repoDir}")"
+repopacks=$(
+    find "$(pwd)" -maxdepth 1 \
+        -regextype egrep \
+        -regex ".*/_${subdir}__[0-9]{4}-[0-9]{2}-[0-9]{2}-g[0-9a-f]+" \
+    | sort \
+    | sed -e 's@^./@@'
+)
+if [ -n "${repopacks}" ]; then
+    die "The repo dir on stdhost \`${repoDir}\` has no gitdir.
+It seems to be deinitialized.  There might be a next repo generation that you
+should use instead.  Alternatively, you could check the READMEs in the
+repopacks below to find more details about the repo, or use \`stdtools
+reinit-repo\` to reinitialize the repo from a repopack.  The repopacks are:
+
+${repopacks}
+"
+fi
+
+die "The repo dir on stdhost \`${repoDir}\` has no gitdir."

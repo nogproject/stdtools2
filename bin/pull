@@ -1,0 +1,320 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+toolsdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)
+source "${toolsdir}/lib/lib.sh"
+
+releases=$(cfg_releases)
+
+usage() {
+    cat <<\EOF
+Usage:
+  pull
+
+`stdtools pull` pulls changes from the master branches at origin to bring the
+local workspace up to date with master.  Local submodule master branches will
+be updated to avoid detached heads.
+EOF
+}
+
+haveWarnings=
+warn() {
+    haveWarnings=t
+    echo "Warning: $*"
+}
+
+main() {
+    argparse "$@"
+    activateToolsEnvChecked
+    config
+
+    "${toolsdir}/bin/init-hooks"
+
+    my_master="${cfg_initials}/master"
+
+    # Try to update LFS config once before merge check, so that updates are
+    # applied even if pull cannot proceed due to conflicting master branches.
+    # Update LFS again after the pull, so that changes due to the pull are also
+    # considered, too.
+    initLfsSsh
+
+    if ! isTopLevelDir; then
+        die 'Must be run in the worktree toplevel directory.'
+    fi
+
+    if haveChanges; then
+        warn "Uncommited changes."
+    fi
+    if haveUntrackedFiles; then
+        warn "Untracked files."
+    fi
+
+    checkRemoteNotDeinit
+    fetch
+
+    if ! verifyOnMasterBranches; then
+        warn "Some working copies are not on branch '${my_master}'.
+
+This warning may be meaningless if you use submodules that are unrelated
+to stdrepos, for example public GitHub repos.  If this is the case, consider
+using ordinary git commands instead of stdtools pull.
+
+To fix the warning for stdrepos and subrepos, you need to checkout the local
+branch '${my_master}' in the submodule with the commit that matches the
+supermodule.  If you already have a branch '${my_master}' that points to
+something else in the submodule, you should be careful to avoid loosing local
+changes.  The right sequence of commands often is:
+
+    cd <submodule>
+    git branch -f ${my_master}
+    git checkout ${my_master}
+"
+    fi
+
+    if test ${haveWarnings}; then
+        die 'There are warnings (see above).'
+    fi
+
+    if ! verifyCanFFSubs; then
+        die "Cannot fast-forward '${my_master}' to 'origin/master' in some submodules.
+
+This error may be meaningless if you use submodules that are unrelated to
+stdrepos, for example public GitHub repos.  If this is the case, consider using
+ordinary git commands instead of stdtools pull.
+
+To resolve the situation for stdrepos and subrepos, you need to manually merge
+the submodules and the supermodule.  See 'Merging Submodule Changes' in the git
+book <https://goo.gl/0YPcJC> for guidance.
+"
+    fi
+
+    if ! merge; then
+        die "Failed to merge remote master branches.
+
+Manually resolve conflicts and restart pull.
+"
+    fi
+
+    if ! git submodule update --recursive; then
+        die "Failed to update submodules."
+    fi
+
+    if ! checkoutSubMasterBranches; then
+        die "Failed to checkout '${my_master}' in submodules."
+    fi
+
+    echo "    MERGE OK"
+
+    initLfsSsh
+
+    echo "    DONE pull"
+}
+
+config() {
+    cfg_initials=$(git config user.initials) ||
+        die "Failed to read user.initials (please set using 'git config --global user.initials')."
+
+    if ! cfg_stdhost="$(cfg_stdhost)"; then
+        die 'Failed to determin stdthost.'
+    fi
+
+}
+
+argparse() {
+    while [ $# -ge 1 ]
+    do
+        case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -*)
+            die "Unknown option $1"
+            ;;
+        *)
+            break
+            ;;
+        esac
+        shift
+    done
+    case $# in
+        0)
+            ;;
+        *)
+            die "Invalid number of arguments."
+            ;;
+    esac
+    return 0
+}
+
+fetch() {
+    ( echo '.' && lsActiveSubmodulesRecursive ) \
+    | while read -r dir; do
+        echo "    FETCH ${dir}"
+        ( cd "${dir}" && git fetch ) || exit
+    done || exit
+}
+
+merge() {
+    lsOriginMasterBranches |
+    (
+        while read -r b; do
+            canFastForward HEAD ${b} && continue
+            echo "    MERGE ${b}"
+            git merge $b || return 1
+        done
+    )
+}
+
+checkoutSubMasterBranches() {
+    lsActiveSubmodulesRecursive \
+    | (
+        ret=0
+        while read -r dir; do
+            (
+                cd "${dir}"
+                isOnBranch "${my_master}" && continue
+                echo "    CHECKOUT ${my_master} ${dir}"
+                git branch -f ${my_master} HEAD 2>/dev/null || true
+                git checkout ${my_master}
+            ) || ret=1
+        done
+        return ${ret}
+    )
+}
+
+initLfsSsh() {
+    ( echo '.' && lsActiveSubmodulesRecursive ) \
+    | while read -r dir; do
+        initLfsSshInDir "${dir}"
+    done || exit
+}
+
+initLfsSshInDir() {
+    local dir="$1"
+    (
+        cd "${dir}"
+        if isConfiguredLfsSsh; then
+            if gitConfigHasAllLfsSshSettings; then
+                echo "    YES lfs ssh transfer ${dir}"
+            else
+                echo "    INIT lfs ssh transfer ${dir}"
+                setLfsSshConfig
+            fi
+        else
+            if gitConfigHasAnyLfsSshSetting; then
+                echo "    DEINIT lfs ssh transfer ${dir}"
+                unsetLfsSshConfig
+            else
+                echo "    NO lfs ssh transfer ${dir}"
+            fi
+        fi
+    )
+}
+
+isOnBranch() {
+    local ref
+    ref=$(git symbolic-ref HEAD 2>/dev/null) &&
+    [ "${ref}" = "refs/heads/$1" ]
+}
+
+lsOriginMasterBranches() {
+    echo 'origin/master'
+    git branch --list -r origin/*/master
+}
+
+verifyOnMasterBranches() {
+    ( echo '.' && lsActiveSubmodulesRecursive ) \
+    | (
+        ret=0
+        while IFS= read -r dir; do
+            echo "    CHECK ${my_master} ${dir}"
+            if isForeignOrigin "${dir}"; then
+                echo 'Ignoring foreign origin.'
+            elif isOnMaster "${dir}"; then
+                true
+            elif tryFixMaster "${dir}"; then
+                true
+            else
+                echo >&2 "Not on branch '${my_master}' in '${dir}'."
+                ret=1
+            fi
+        done
+        return ${ret}
+    )
+}
+
+isForeignOrigin() {
+    local dir="$1"
+    (
+        cd "${dir}" &&
+        ! git remote get-url origin 2>/dev/null | grep -q "ssh://${cfg_stdhost}/"
+    )
+}
+
+isOnMaster() {
+    local dir="$1"
+    (
+        cd "${dir}" &&
+        ref=$(git symbolic-ref HEAD 2>/dev/null) &&
+        [ "${ref}" = "refs/heads/${my_master}" ]
+    )
+}
+
+tryFixMaster() {
+    local dir="$1"
+    (
+        cd "${dir}"
+        if isValidRef "refs/heads/${my_master}"; then
+            if canFastForward HEAD ${my_master}; then
+                git branch -f ${my_master}
+                git checkout ${my_master}
+            else
+                echo "Cannot fast-forward ${my_master}."
+                return 1
+            fi
+        else
+            git checkout -b ${my_master}
+        fi
+    )
+}
+
+isValidRef() {
+    git rev-parse --verify "$1" >/dev/null 2>&1
+}
+
+
+# It must be possible to fast-forward local ini/master branches in the
+# submodules to origin/master.  Otherwise, the submodule might need to be
+# merged, which is not yet automated.
+verifyCanFFSubs() {
+    lsActiveSubmodulesRecursive \
+    | (
+        ret=0
+        while read -r dir; do
+            echo "    CHECK fast-forward ${dir}"
+            if isForeignOrigin "${dir}"; then
+                echo 'Ignoring foreign origin.'
+            elif ( cd "${dir}" && canFastForward origin/master "${my_master}" ); then
+                true
+            else
+                echo >&2 "Cannot fast-forward '${my_master}' to 'origin/master' in '${dir}'."
+                ret=1
+            fi
+        done
+        return ${ret}
+    )
+}
+
+# `canFastForward <src> <dest>` tests whether <src> can be used to fast-forward
+# <dest>.
+canFastForward() {
+    # Ok if dest ref is unknown, since it can be created.
+    if ! git rev-parse -q --verify >/dev/null 2>&1 $2; then
+        return 0
+    fi
+    [ "$(git rev-list -n 1 $1..$2)" = '' ]
+}
+
+main "$@"
