@@ -1,0 +1,76 @@
+#!/bin/bash
+set -o errexit -o nounset -o pipefail -o noglob
+
+# `stdtools` may be a symlink.  To locate the real location, recursively follow
+# symlinks, which requires GNU coreutils readlink.
+xreadlink=
+for p in greadlink readlink; do
+    if type ${p} >/dev/null 2>&1 &&
+        ( ${p} --help 2>/dev/null | grep -q 'GNU coreutils' ); then
+        xreadlink="${p}"
+        break
+    fi
+done
+if ! test ${xreadlink}; then
+    echo >&2 'Error: Missing GNU coreutils readlink.'
+    exit 1
+fi
+
+toolsdir=$(
+    cd "$(dirname "$(${xreadlink} -f "${BASH_SOURCE[0]}")")" && cd .. && pwd
+)
+source "${toolsdir}/lib/lib.sh"
+
+usage() {
+    cat <<\EOF
+Usage:
+  stdtools [<cmd> [<cmd-args>...]]
+
+`stdtools` calls `<cmd>` from the stdtools directory.  To list available
+commands, run `stdtools` without arguments.
+EOF
+}
+
+main() {
+    while [ $# -gt 0 ]; do
+        case $1 in
+        -h|--help)
+            usage
+            exit
+            ;;
+        *)
+            break
+            ;;
+        esac
+    done
+
+    if [ $# -eq 0 ]; then
+        listCmds
+        exit
+    fi
+
+    execTool "$@"
+}
+
+listCmds() {
+    echo "# Main commands ${toolsdir}/bin"
+    echo
+    ( cd "${toolsdir}"/bin && ls )
+    echo
+}
+
+execTool() {
+    tool="$1"
+    shift
+
+    for d in bin; do
+        prg="${toolsdir}/${d}/${tool}"
+        if [ -x ${prg} ]; then
+            exec "${prg}" "$@"
+        fi
+    done
+
+    die "Unknown tool '${tool}'; run 'stdtools' without argument to list available tools."
+}
+
+main "$@"
