@@ -1,0 +1,129 @@
+#!/bin/bash
+set -o errexit -o nounset -o pipefail -o noglob
+
+toolsdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)
+source "${toolsdir}/lib/lib.sh"
+
+usage() {
+    cat <<\EOF
+Usage:
+  show [-h] [--files|--no-files] [-n <lines>] [--ls|--no-ls] [<repo>]
+
+Options:
+  -h      Enable human-readable output.  Suffixes are used to indicate kilo,
+          mega, and so on.
+  --files|--no-files  [default: yes]
+          Enable or disable including head of important files in report
+  -n <lines>  [default: 40]
+          Number of lines of imporant files to include
+  --ls|--no-ls  [default: no]
+          Enable or disable including output of `git ls-files` in report
+
+`stdtools show` prints information about `<repo>`.  The default is the current
+repo. A single dot, `.`, also indicates the current repo.
+
+`stdtools show` outputs information as YAML, such that it can be concatenated
+into a multi-document YAML file.  For example, you can use Python to read the
+information for multiple repos and convert it to a JSON dict whose keys are the
+repo fullnames:
+
+    stdtools search foo_.*_2016.* \
+    | awk '{ print $1 }' \
+    | xargs -n 1 stdtools show \
+    | tee info.yaml
+
+    cat info.yaml \
+    | python3 -c "import sys; import yaml; import json; d = {d['fullname']: d for d in yaml.load_all(sys.stdin)}; print(json.dumps(d, indent=2, sort_keys=True));" \
+    | tee info.json
+
+EOF
+}
+
+main() {
+    argparse "$@"
+
+    if [ -z "${arg_name}" ] || [ "${arg_name}" = '.' ]; then
+        fullname="$(getRepoCommonName2)"
+        if ! isValidRepoFullname "${fullname}"; then
+            die "Failed to determine repo name for current directory."
+        fi
+    else
+        validateRepoName "${arg_name}"
+        fullname="${arg_name}"
+    fi
+
+    read _ project _ _ _ <<<"$(parseRepoName ${fullname})"
+    path="$(repoPath "${fullname}")"
+    projectdir="$(projectDir "${project}")"
+
+    printf '%s\n' '---'
+    printf 'fullname: %s\n' "${fullname}"
+    printf 'path: %s\n' "${path}"
+    printf 'projectdir: %s\n' "${projectdir}"
+    if ! callStdhost show "${fullname}" "${path}" "${projectdir}"; then
+        die "Failed to run remote cmd show."
+    fi
+    printf '...\n'
+}
+
+argparse() {
+    arg_name=
+    opt_h=
+    opt_n=40
+    opt_files=t
+    opt_ls=
+    while [ $# -ge 1 ]
+    do
+        case "$1" in
+        --help)
+            usage
+            exit 0
+            ;;
+        -h)
+            opt_h=t
+            ;;
+        --files)
+            opt_files=t
+            ;;
+        --no-files)
+            opt_files=
+            ;;
+        -n)
+            shift
+            if [ $# -eq 0 ]; then
+                die "missing argument for -n."
+            fi
+            if ! grep -q '^[1-9][0-9]*$' <<<"$1"; then
+                die "invalid argument for -n; expected number, got '$1'."
+            fi
+            opt_n=$1
+            ;;
+        --ls)
+            opt_ls=t
+            ;;
+        --no-ls)
+            opt_ls=
+            ;;
+        -*)
+            die "unknown option $1"
+            ;;
+        *)
+            break
+            ;;
+        esac
+        shift
+    done
+    case $# in
+    0)
+        ;;
+    1)
+        arg_name="$1"
+        ;;
+    *)
+        die "Wrong number of arguments."
+        ;;
+    esac
+    return 0
+}
+
+main "$@"

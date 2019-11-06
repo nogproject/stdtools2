@@ -1,0 +1,283 @@
+#!/bin/bash
+set -o errexit -o nounset -o pipefail -o noglob
+
+export LC_ALL=C
+
+name=$1
+path=$2
+projectdir=$3
+
+if test ${opt_h}; then
+    opt_h=h
+fi
+
+hasPacks=
+hasRepopacks=
+hasArchives=
+isAbsent=
+
+printf 'maintainerid: '
+find "${path}" -maxdepth 0 -printf '%u' 2>/dev/null || printf 'null'
+printf '\n'
+
+printf 'pubdir: '
+if pubdir="$(cd "${path}/releases" 2>/dev/null && git config tools.pubdir)"; then
+    printf '%s' "${pubdir}"
+else
+    printf 'null'
+fi
+printf '\n'
+
+printf 'status: [ '
+
+if [ -d "${path}/.git" ]; then
+    cd "${path}"
+
+    files="README.md index.md version.inc.md"
+    if git grep -q '^THIS.*RETIRED' master -- ${files} 2>/dev/null; then
+        printf 'retired'
+    elif git grep -q '^THIS.*FROZEN' master -- ${files} 2>/dev/null; then
+        printf 'frozen'
+    elif git grep -q '^THIS.*DEPRECATED' master -- ${files} 2>/dev/null; then
+        printf 'deprecated'
+    else
+        printf 'active'
+    fi
+
+    if [ -n "$(find . -maxdepth 1 -name 'archive-*' -print -quit)" ]; then
+        printf ', packed'
+        hasPacks=t
+    fi
+else
+    printf 'absent'
+    isAbsent=t
+fi
+
+archivedir="${projectdir}/archive"
+if [ -d "${archivedir}" ] && [ -n "$(find "${archivedir}" -maxdepth 1 -name "${name}*" -print -quit)" ]; then
+    printf ', archived'
+    hasArchives=t
+fi
+
+subdir="$(basename "${path}")"
+repopacks=$(
+    find "$(dirname "${path}")" -maxdepth 1 \
+        -regextype egrep \
+        -regex ".*/_${subdir}__[0-9]{4}-[0-9]{2}-[0-9]{2}-g[0-9a-f]+" \
+    | sort \
+    | sed -e 's@^./@@'
+)
+if [ -n "${repopacks}" ]; then
+    printf ', repopacked'
+    hasRepopacks=t
+fi
+
+printf ' ]\n'
+
+if test ${hasPacks}; then
+    printf 'packs:\n'
+    find "${path}" -maxdepth 1 -name 'archive-*' |
+    xargs du -sb${opt_h}c | sed -e 's/^\([0-9a-zA-Z.]*\)\s*\(.*\)$/\2 : \1/' | column -t | sed -e 's/^/  /'
+fi
+
+if test ${hasArchives}; then
+    printf 'archives:\n'
+    find "${archivedir}" -maxdepth 1 -name "${name}*" |
+    xargs du -sb${opt_h}c | sed -e 's/^\([0-9a-zA-Z.]*\)\s*\(.*\)$/\2 : \1/' | column -t | sed -e 's/^/  /'
+fi
+
+if test ${hasRepopacks}; then
+    printf 'repopacks:\n'
+
+    printf '%s' "${repopacks}" \
+    | xargs du -sb${opt_h}c \
+    | sed -e 's/^\([0-9a-zA-Z.]*\)\s*\(.*\)$/\2 : \1/' \
+    | column -t \
+    | sed -e 's/^/  /'
+fi
+
+if test ${isAbsent}; then
+    exit ${cfg_exit_ok}
+fi
+
+
+cd "${path}"
+
+# Convert branch listing to YAML:
+#
+#    <name> : {head: <abbrv-sha1>, subject: '<quoted-subject>'}
+#
+
+printf 'main branches:\n'
+(
+    printf '.\n'
+    git submodule foreach --quiet 'printf "%s\n" "${path}"'
+) |
+while IFS= read -r p; do
+    (
+        cd "${p}" &&
+        printf '  %s :\n' "${p}" &&
+        git branch --list -v maint master 'master-*' public |
+            cut -b 3- |
+            sed -e "s/'/''/g" \
+                -e "s/^\([^ ]*  *\)\([0-9a-f]*\) \(.*\)$/\1: {head: \2, subject: '\3'}/" \
+                -e "s/^/    /"
+    )
+done
+
+# Handle special git branch output like `(no branch)` and `(detached ...)`.
+printf 'further branches:\n'
+(
+    printf '.\n'
+    git submodule foreach --quiet 'printf "%s\n" "${path}"'
+) |
+while IFS= read -r p; do
+    (
+        cd "${p}" &&
+        if git branch | cut -b 3- | egrep -q -v '^(maint|master|master-[^/]*|public)$'; then
+            printf '  %s :\n' "${p}" &&
+            git branch -v | cut -b 3- |
+                ( egrep -v "^(maint|master|master-[^/]*|public) " || true ) |
+                sed -e "s/'/''/g" \
+                    -e "s/^\(([^)]*)  *\)\([0-9a-f]*\) \(.*\)$/\1: {head: \2, subject: '\3'}/" \
+                    -e "s/^\([^ ]*  *\)\([0-9a-f]*\) \(.*\)$/\1: {head: \2, subject: '\3'}/" \
+                    -e "s/^/    /"
+        fi
+    )
+done
+
+printf 'stats:\n'
+
+printf '  nFiles: '
+( git ls-files ; git submodule foreach --quiet git ls-files ) | wc -l
+
+printf '  nSiloFiles: '
+( git silo ls-tree HEAD; git submodule foreach --quiet 'git silo ls-tree HEAD') | wc -l
+
+printf '  nLfsFiles: '
+if [ -e "$(git rev-parse --git-path 'lfs/objects')" ]; then
+    ( git lfs ls-files HEAD; git submodule foreach --quiet 'git lfs ls-files HEAD') | wc -l
+else
+    echo 0
+fi
+
+printf '  nGitOtherFiles: '
+( git ls-files --other ; git submodule foreach --quiet git ls-files --other ) | wc -l
+
+printf '  nInodes: '
+find . -printf '%i\n' | sort -u | wc -l
+
+printf '  sizeTotal: '
+du -sb${opt_h} . | cut -d $'\t' -f 1
+
+# Use --block-size first to get byte output if -h option is not present.
+printf '  diskUsageTotal: '
+du --block-size=1 -s${opt_h} . | cut -d $'\t' -f 1
+
+printf 'dbstats:\n'
+
+printf '  nLooseGitObjects: '
+(
+    if [ -e '.git/objects' ]; then
+        find .git/objects/ -path '.git/objects/??/*'
+    fi
+    if [ -e '.git/modules' ]; then
+        find .git/modules/ -path '.git/modules/*/objects/??/*' |
+        grep -v '/silo/objects/' || true
+    fi
+    git submodule foreach --quiet '
+        if [ -e ".git/objects" ]; then
+            find .git/objects/ -path ".git/objects/??/*"
+        fi
+    '
+) | wc -l
+
+printf '  nUniqueSiloObjects: '
+(
+    if [ -e '.git/silo/objects' ]; then
+        find .git/silo/objects/ -path '.git/silo/objects/??/*' -printf '%i\n'
+    fi
+    if [ -e '.git/modules' ]; then
+        find .git/modules/ -path '.git/modules/*/silo/objects/??/*' -printf '%i\n'
+    fi
+    git submodule foreach --quiet '
+        if [ -e ".git/silo/objects" ]; then
+            find .git/silo/objects/ -path ".git/silo/objects/??/*" -printf "%i\n"
+        fi
+    '
+) | sort -u | wc -l
+
+printf '  siloStorageSize:\n'
+paths="$(
+    if [ -e '.git/silo/objects' ]; then
+        printf '%s\n' "$(pwd)/.git/silo/objects"
+    fi
+    if [ -e '.git/modules' ]; then
+        find "$(pwd)/.git/modules/" -path '*/.git/modules/*/silo/objects' -type d
+    fi
+    git submodule foreach --quiet '
+        if [ -e ".git/silo/objects" ]; then
+            printf "%s\n" "$(pwd)/.git/silo/objects/"
+        fi
+    '
+)"
+if [ -z "${paths}" ]; then
+    echo '    total : 0'
+else
+    xargs <<<"${paths}" du -sb${opt_h}c | sed -e 's/^\([0-9a-zA-Z.]*\)\s*\(.*\)$/\2 : \1/' | column -t | sed -e 's/^/    /'
+fi
+
+printf '  nUniqueLfsObjects: '
+(
+    if [ -e '.git/lfs/objects' ]; then
+        find .git/lfs/objects/ -path '.git/lfs/objects/??/??/*' -printf '%i\n'
+    fi
+    if [ -e '.git/modules' ]; then
+        find .git/modules/ -path '.git/modules/*/lfs/objects/??/??/*' -printf '%i\n'
+    fi
+    git submodule foreach --quiet '
+        if [ -e ".git/lfs/objects" ]; then
+            find .git/lfs/objects/ -path ".git/lfs/objects/??/??/*" -printf "%i\n"
+        fi
+    '
+) | sort -u | wc -l
+
+printf '  lfsStorageSize:\n'
+paths="$(
+    if [ -e '.git/lfs/objects' ]; then
+        printf '%s\n' "$(pwd)/.git/lfs/objects"
+    fi
+    if [ -e '.git/modules' ]; then
+        find "$(pwd)/.git/modules/" -path '*/.git/modules/*/lfs/objects' -type d
+    fi
+    git submodule foreach --quiet '
+        if [ -e ".git/lfs/objects" ]; then
+            printf "%s\n" "$(pwd)/.git/lfs/objects/"
+        fi
+    '
+)"
+if [ -z "${paths}" ]; then
+    echo '    total : 0'
+else
+    xargs <<<"${paths}" du -sb${opt_h}c | sed -e 's/^\([0-9a-zA-Z.]*\)\s*\(.*\)$/\2 : \1/' | column -t | sed -e 's/^/    /'
+fi
+
+
+if test ${opt_files}; then
+    printf 'files:\n'
+    for f in README.md DATAPLAN.md README-data.md version.inc.md; do
+        [ -e "${f}" ] || continue
+        printf '  %s: |\n' "${f}"
+        head -n ${opt_n} "${f}" | sed -e 's/^/    /'
+        if [ $(wc -l <"${f}") -gt ${opt_n} ]; then
+            printf '\n    (... cut after %d lines ...)\n\n' ${opt_n}
+        fi
+    done
+fi
+
+if test ${opt_ls}; then
+    printf 'ls:\n'
+    git ls-files | sed -e 's/^/  - /'
+fi
+
+exit ${cfg_exit_ok}
