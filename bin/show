@@ -15,7 +15,7 @@ Options:
   --files|--no-files  [default: yes]
           Enable or disable including head of important files in report.
   -n <lines>  [default: 40]
-          Number of lines of imporant files to include
+          Limit the number of lines that are included with `--files`.
   --ls|--no-ls  [default: no]
           Enable or disable including output of `git ls-files` in report.
 
