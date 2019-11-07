@@ -1,0 +1,236 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+toolsdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)
+source "${toolsdir}/lib/lib.sh"
+
+releases=$(cfg_releases)
+dataplan=$(findDataplan)
+
+usage() {
+    cat <<\EOF
+Usage:
+  publish-merge-to-master [-y|--yes] [--skip-additional]
+        [--skip-silo] [--skip-lfs-nog] [<commit>]
+
+Options:
+  <commit>      Merge `<commit>` [default: HEAD].
+  -y|--yes      Assume yes to all confirmations.
+  --skip-additional  Disable push to `publishgit.*.url` repos.
+
+`publish-merge-to-master` merges branch `master` at origin.
+
+If `.toolsconfig` contains `publishgit` sections, `<commit>` will be pushed to
+additional locations.  `publishgit.<name>.url` is the repo url.
+`publishgit.<name>.branch` is the destination branch (default `master`).
+`publishgit.<name>.submodule` is the path of a submodule to be pushed instead
+of the toplevel.  `publishgit` sections can be conditioned on the remote by
+setting a regular expression in `ifRemoteMatch`, which is anchored and matched
+with `egrep` against the output of `git remote -v` in the repo to be pushed.
+The following example publishes the toplevel and the submodule releases to the
+same remote repo:
+
+```
+[publishgit "stdtools"]
+    ifRemoteMatch = ^origin\\t.*/2019/stdtools\\s.*$
+    url = ssh://git@git.zib.de/example/stdtools.git
+    branch = master
+[publishgit "releases"]
+    submodule = releases
+    ifRemoteMatch = ^origin\\t.*/2019/stdtools/releases\\s.*$
+    url = ssh://git@git.zib.de/example/stdtools.git
+    branch = releases
+```
+EOF
+}
+
+main() {
+    argparse "$@"
+    cd "$(git rev-parse --show-toplevel)"
+    config
+
+    siloStatus='full'
+    if [ -e "${dataplan}" ] && grep -q "^${masterstoreKey}:" "${dataplan}"; then
+        siloStatus='purged'
+    fi
+
+    checkRemoteNotDeinit
+
+    range="origin/master..${pubsha1}"
+    confirmNotice "
+Will merge to master in repo and $(pluralize $(diffTreeNumSubmodules "${range}") 'submodule'):
+$(changesPath '.' "origin/master..${pubsha1:0:10}" 'origin/master' "${pubsha1}")
+$(changesSubmodules "${range}")
+
+  - as user: ${maintainerid}
+  - at host: ${masterhost}
+  - in directory: ${masterpath}
+  - revision: $pubsha1 ($pubref)
+$(
+    if ! test ${opt_skip_additional} && [ -n "${pubAdditional}" ]; then
+        echo
+        printf '%s\n' "${pubAdditional}" \
+        | while read -r submodule subCommit branch url; do
+            printf '  - additional push `%s` to %s %s:%s\n' \
+                "${submodule}" "${url}" "${subCommit}" "${branch}"
+        done
+    fi
+)
+$(
+    [ "${siloStatus}" = 'purged' ] && cat <<EOF
+
+************************************************************************
+WARNING: skipping git silo, since ${dataplan} contains purge config.
+************************************************************************
+EOF
+)
+" "ok"
+
+    callStdhostAsUser "${maintainerid}" publish-merge-to-master \
+        "${masterhost}" "${fullname}" "${masterpath}" \
+        "${releases}" "${pubsha1}" "${siloStatus}" \
+    || die 'call to stdhost failed.'
+
+    if ! test ${opt_skip_additional} && [ -n "${pubAdditional}" ]; then
+        printf '%s\n' "${pubAdditional}" \
+        | (
+            nErr=0
+            while read -r submodule subCommit branch url; do
+                echo "    PUSH ${submodule} ${url} ${subCommit}:${branch}"
+                if ! git --no-replace-objects -C "${submodule}" \
+                    push "${url}" "${subCommit}:refs/heads/${branch}";
+                then
+                    let ++nErr
+                fi
+            done
+            case ${nErr} in
+            0) true ;;
+            1) die 'one additional push failed; consider --skip-additional as a temporary workaround.' ;;
+            *) die "${nErr} additional pushes failed; consider --skip-additional as a temporary workaround." ;;
+            esac
+        )
+    fi
+
+    fetchOrigin
+    echo "    DONE publish-merge-to-master"
+}
+
+config() {
+    echo "    CONFIG"
+    maintainerid=$(cfg_maintainerid)
+
+    fullname=
+    local url
+    url="$(parseRemoteURL)" || die 'Failed to parse remote URL.'
+    IFS=: read -r masterhost masterpath <<<"${url}"
+    if ! fullname="$(getRepoCommonName2)"; then
+        die 'failed to determine repo fullname.'
+    fi
+    if ! isValidRepoFullname "${fullname}"; then
+        die "unexpected repo name; expected fullname, got '${fullname}'."
+    fi
+
+    pubAdditional="$(getAdditional)"
+}
+
+getAdditional() {
+    toolsconfig='.toolsconfig'
+    if ! [ -e "${toolsconfig}" ]; then
+        return 0
+    fi
+
+    (
+        git config -f "${toolsconfig}" --get-regexp 'publishgit\.[^.]*\.url' \
+        || true
+    ) | while read -r key url; do
+        IFS=. read -r _ name _ <<<"${key}"
+
+        submodule=$(
+            git config -f "${toolsconfig}" "publishgit.${name}.submodule" \
+            || echo '.'
+        )
+
+        if ifRemoteMatch=$(
+            git config -f "${toolsconfig}" "publishgit.${name}.ifRemoteMatch"
+        ); then
+            if git -C "${submodule}" remote -v | egrep -q "^${ifRemoteMatch}$"; then
+                true # match -> continue below.
+            else
+                continue # no match -> skip.
+            fi
+        fi
+
+        if [ "${submodule}" = '.' ]; then
+            subCommit="${pubsha1}"
+        else
+            subCommit=$(
+                git ls-tree "${pubsha1}" -- "${submodule}" | awk '{ print $3 }'
+            )
+            if [ $(wc -l <<<"${subCommit}") -ne 1 ] \
+                || ! egrep -q '^[0-9a-f]{40}$' <<<"${subCommit}"; then
+                die "Failed to get commit for submodule \`${submodule}\`."
+            fi
+        fi
+
+        branch=$(
+            git config -f "${toolsconfig}" "publishgit.${name}.branch" \
+            || echo 'master'
+        )
+
+        printf '%s %s %s %s\n' "${submodule}" "${subCommit}" "${branch}" "${url}"
+    done
+}
+
+argparse() {
+    pubref=HEAD
+    opt_yes=
+    opt_skip_additional=
+    while [ $# -ge 1 ]
+    do
+        case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -y|--yes)
+            opt_yes=t
+            ;;
+        --skip-additional)
+            opt_skip_additional=t
+            ;;
+        -*)
+            die "Unknown option $1"
+            ;;
+        *)
+            break
+            ;;
+        esac
+        shift
+    done
+    (( $# == 1 )) && pubref=$1
+    pubsha1=$(git rev-parse --verify "${pubref}") ||
+        die "Invalid revision '${pubref}'"
+}
+
+fetchOrigin() {
+    echo "    FETCH ."
+    git fetch origin
+    echo "    FETCH stdhost submodules"
+    lsActiveSubmodulesRecursive \
+    | while IFS= read -r path; do
+        (
+            cd "${path}"
+            if originIsStdhost; then
+                echo "${path}"
+                git fetch origin
+            fi
+        )
+    done
+}
+
+originIsStdhost() {
+    git remote get-url origin 2>/dev/null | grep -q "ssh://$(cfg_stdhost)/"
+}
+
+main "$@"

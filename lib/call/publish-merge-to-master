@@ -1,0 +1,162 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+main() {
+    masterhost="$1"
+    fullname="$2"
+    masterpath="$3"
+    releases="$4"
+    pubsha1="$5"
+    siloStatus="$6"
+
+    cd "${masterpath}"
+    (
+        stdlock 10
+        ensureLfsConfig
+        mergeRepo
+        if [ "${siloStatus}" = 'purged' ]; then
+            echo "Skipping LFS for silo status '${siloStatus}'."
+        else
+            updateLfs
+        fi
+
+        # Commit in parent dir if it contains a git repo and the submodule has
+        # changed.
+        cd "$(dirname ${masterpath})"
+        if ! [ "$(git rev-parse --is-inside-work-tree 2>/dev/null)" = "true" ]; then
+            echo "    SKIP commit super: not a git working copy"
+        elif !  [ -f "$(git rev-parse --show-toplevel)/.gitmodules" ]; then
+            echo "    SKIP commit super: missing .gitmodules"
+        else
+            ( stdlock 11 && commitSuper ) 11<"$(stdlockdir)"
+        fi
+    ) 10<"$(stdlockdir)"
+
+    exitok
+}
+
+mergeRepo() {
+    echo "    MERGE ${masterhost}:${masterpath}"
+    gitNoLfsSmudge checkout master
+    gitNoLfsSmudge merge --ff-only ${pubsha1}
+
+    echo "    SUBMODULE update"
+    gitNoLfsSmudge submodule update
+
+    echo "    MERGE submodules"
+    lsActiveSubmodulesRecursive \
+    | while IFS= read -r path; do
+        (
+            cd "${path}"
+            sha1=$(git rev-parse HEAD) &&
+            echo "    ... submodule ${path}" &&
+            gitNoLfsSmudge checkout master &&
+            gitNoLfsSmudge merge --ff-only ${sha1}
+        )
+    done
+
+    echo "    CHECK clean working copy ${masterhost}:${masterpath}"
+    cd "${masterpath}"
+    gitNoLfsSmudge status
+    if [ "$(gitNoLfsSmudge status --porcelain)" != "" ]; then
+        die "Working copy '$(pwd)' is not clean."
+    fi
+}
+
+ensureLfsConfig() {
+    ensureLfsConfigInDir '.'
+    lsActiveSubmodulesRecursive | while IFS= read -r path; do
+        ensureLfsConfigInDir "${path}"
+    done
+}
+
+ensureLfsConfigInDir() {
+    local path="$1"
+    (
+        cd "${path}"
+
+        if ! gitattributesContainLfs; then
+            return
+        fi
+
+        if ! git config --local filter.lfs.clean >/dev/null 2>&1; then
+            echo "    INSTALL lfs in ${path}"
+            git lfs install --local --skip-smudge
+        fi
+    )
+}
+
+updateLfs() {
+    updateLfsInDir '.'
+    lsActiveSubmodulesRecursive | while IFS= read -r path; do
+        updateLfsInDir "${path}"
+    done
+}
+
+updateLfsInDir() {
+    local path="$1"
+    (
+        cd "${path}"
+
+        if ! gitattributesContainLfs; then
+            return
+        fi
+
+        # Do not use `git lfs checkout`, since it is much slower than `git
+        # lfs-x link`.
+        echo "    LFS ${path}"
+
+        if ! git config --local filter.lfs.clean >/dev/null 2>&1; then
+            echo "    INSTALL lfs in ${path}"
+            git lfs install --local --skip-smudge
+        fi
+
+        if ! git lfs-x link -- . ; then
+            die 'Failed to link LFS content.'
+        fi
+
+        if ! git lfs-x fsck --fix-perms; then
+            cat <<\EOF
+**********BEGIN WARNING********************************************************
+
+Failed to fix some LFS permissions.  The reason most likely is that `git lfs-x`
+tries to standardizes file permissions more aggressively to `a=r` since
+2018-01.
+
+Ideally, you would fix the permissions manually now and retry this command.  To
+fix permissions, log in as the user that owns the files whose permissions could
+not be fixed.  Something like:
+
+    stdtools shell -u <user> .
+    git lfs-x fsck --fix-perms
+    exit
+
+**********END WARNING**********************************************************
+EOF
+        fi
+        git lfs-x gc
+
+        # The logic above ensures that there cannot be placeholders left at
+        # this point.  Double check the post condition.
+        if git lfs ls-files | egrep '^[0-9a-f]+ -'; then
+            die "There are LFS placeholders in \`$(pwd)\`."
+        fi
+    )
+}
+
+hasLfsStore() {
+    [ -d "$(git rev-parse --git-path 'lfs')" ]
+}
+
+commitSuper() {
+    if git submodule status -- "$(basename ${masterpath})" | grep -q '^+'; then
+        echo "    COMMIT super"
+        git commit -m "${fullname}: merge to master" \
+            -- "$(basename ${masterpath})"
+    else
+        echo "    COMMIT super: nothing to do"
+    fi
+}
+
+main "$@"

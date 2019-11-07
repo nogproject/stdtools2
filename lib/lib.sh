@@ -546,6 +546,31 @@ egrepEscapePath() {
     sed -e 's/\./[.]/g' <<< "$1"
 }
 
+cfg_maintainerid() {
+    git config tools.maintainerid \
+    || ( detectMaintainerId ) \
+    || die "Failed to determine 'tools.maintainerid'.  You may use git config to explicitly set it."
+}
+
+# `detectMaintainerId` determines the account that owns the remote workspace.
+detectMaintainerId() {
+    local url
+    local masterhost masterpath
+    url="$(parseRemoteURL)" || die 'Failed to parse remote URL.'
+    IFS=: read -r masterhost masterpath <<<"${url}"
+
+    rpcGetId() {
+        exec_ssh ${masterhost} bash -s <<EOF
+set -o errexit -o nounset -o pipefail -o noglob
+stat --format=%U $(printf '%q' "${masterpath}")
+exit ${cfg_exit_ok}
+EOF
+    }
+    if ! rpcGetId; then
+        die "Failed to determine owner of remote path."
+    fi
+}
+
 parseRemoteURL() {
     local url host path
 
@@ -848,6 +873,62 @@ callStdhost() {
     ) | exec_ssh "${stdhost}" bash -s $(encodeArgs "$@")
 }
 
+# `callStdhostAsUser <user> <cmd> <args>...` is like `callStdhost <cmd>` but
+# SSH connects as `<user>`.
+callStdhostAsUser() {
+    local user=$1
+    local cmd=$2
+    shift 2
+
+    local stdhost
+    if ! stdhost="$(cfg_stdhost)"; then
+        return 1
+    fi
+
+    local conn="${user}@${stdhost}"
+    manageKeys "${conn}"
+    (
+        tr -d '\r' <"${toolsdir}/lib/lib.sh" &&
+        genprgDecodeArgs &&
+        genprgOpts &&
+        genprgStdhostEnv &&
+        genprgSameGitAuthorAtRemote &&
+        genprgSameGitCommitterAsUser "${user}" &&
+        tr -d '\r' <"${toolsdir}/lib/call/${cmd}"
+    ) | exec_ssh "${stdhost}" bash -s $(encodeArgs "$@")
+}
+
+# Try to add an ssh key when needed: if a user is explicitly given for the
+# connection and an ssh-agent is running and there is a key
+# `<initials>-as-<login>`, check whether the agent has the key.
+manageKeys() {
+    IFS='@' read -r user host <<<"$1"
+    [ -n "${host}" ] || return 0  # no user.
+    [ -n "${SSH_AUTH_SOCK:-}" ] || return 0  # no ssh-agent.
+    if [ "${user}" = "${USER}" ]; then
+        return 0  # Don't manage keys for the user itself.
+    fi
+    local initials="$(git config user.initials)"
+    local keyname="${initials}-as-${user}"
+    local retries=3
+    while let retries-- ; do
+        if ssh-add -l | grep -q -F "${keyname}"; then
+            return 0  # ssh-agent has key.
+        fi
+        local keyfile="${HOME}/.ssh/${keyname}"
+        if [ -e "${keyfile}" ]; then
+            local lifetime=3600
+            echo "Adding ssh key ${keyname}..."
+            ssh-add -t ${lifetime} "${keyfile}"
+        else
+            echo
+            echo "Expecting ssh key ${keyname}.  Press any key to continue."
+            echo 'See "how to manage ssh keys?" in stdtools userdoc.'
+            read _
+        fi
+    done
+}
+
 # `encodeArgs` encode the positional args as base64urlsafe strings, so that
 # msysgit leaves them alone.  The args are decoded at the remote by the shell
 # snippet from `genprgDecodeArgs`.
@@ -896,6 +977,29 @@ exitok() {
     exit ${cfg_exit_ok}
 }
 
+# `stdlock <fd>` flocks the file descriptor <fd>, which must have been opened
+# on the directory that represents the lock.  We determined the lock dir with
+# `$(stdlockdir)` by convention, which prints the path to the toplevel of a git
+# work tree or the current directory if it is outside a git work tree.  See
+# 'man flock(1) EXAMPLES' how to lock a block of shell code.
+stdlock() {
+    local fd="$1"
+    if ! flock -n ${fd}; then
+        local lockdir
+        lockdir="$(cd "$(git rev-parse --git-dir)" && pwd)"
+        echo "Waiting for stdtools lock '${lockdir}' ..."
+        flock ${fd}
+    fi
+}
+
+stdlockdir() {
+    if isInsideWorkTree; then
+        git rev-parse --show-toplevel
+    else
+        echo '.'
+    fi
+}
+
 checkRemoteNotDeinit() {
     local repo
     case $# in
@@ -912,6 +1016,16 @@ checkRemoteNotDeinit() {
     path="$(repoPath "${repo}")"
 
     callStdhost check-not-deinit "${repo}" "${path}"
+}
+
+# `gitNoLfsSmudge` can be used in place of `git` to ensure that Git LFS smudge
+# is disabled.
+gitNoLfsSmudge() {
+    git -c 'filter.lfs.clean=git-lfs clean -- %f' \
+        -c 'filter.lfs.smudge=' \
+        -c 'filter.lfs.process=' \
+        -c 'filter.lfs.required=false' \
+        "$@"
 }
 
 checkUserGitconfig() {
