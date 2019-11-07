@@ -1,0 +1,85 @@
+#!/bin/bash
+set -o errexit -o nounset -o pipefail -o noglob
+
+toolsdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)
+source "${toolsdir}/lib/lib.sh"
+
+usage() {
+    cat <<\EOF
+Usage:
+  publish-to-master [-f|--force] [-y|--yes]
+        [--no-master-check] [--no-recurse-submodules-check]
+        [--skip-additional]
+
+Options:
+  -f|--force  Skip check for uncommitted changes or untracked files.
+  -y|--yes    Assume yes to all confirmations.
+  --no-master-check   Skip check whether other master branches are merged.
+  --no-recurse-submodules-check   Do not use --recurse-submodules=check on
+                git push.
+  --skip-additional   Disable push to `publishgit.*.url` repos.
+
+`publish-to-master` runs `publish-intern` and `publish-merge-to-master`.
+EOF
+}
+
+main() {
+    argparse "$@"
+
+    echo "    publish-intern"
+    "${toolsdir}"/bin/publish-intern \
+        $(test ${opt_force} && printf '%s' '--force') \
+        $(test ${opt_master_check} || printf '%s' '--no-master-check') \
+        $(
+            test ${opt_recurse_submodules_check} ||
+            printf '%s' '--no-recurse-submodules-check'
+        ) \
+        $(test ${opt_yes} && printf '%s' '--yes')
+
+    echo "    publish-merge-to-master"
+    "${toolsdir}"/bin/publish-merge-to-master \
+        $(test ${opt_yes} && printf '%s' '--yes') \
+        $(test ${opt_skip_additional} && printf '%s' '--skip-additional')
+}
+
+argparse() {
+    opt_force=
+    opt_yes=
+    opt_master_check=t
+    opt_recurse_submodules_check=t
+    opt_skip_additional=
+    while [ $# -ge 1 ]
+    do
+        case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -f|--force)
+            opt_force=t
+            ;;
+        -y|--yes)
+            opt_yes=t
+            ;;
+        --no-master-check)
+            opt_master_check=
+            ;;
+        --no-recurse-submodules-check)
+            opt_recurse_submodules_check=
+            ;;
+        --skip-additional)
+            opt_skip_additional=t
+            ;;
+        -*)
+            die "Unknown option $1"
+            ;;
+        *)
+            break
+            ;;
+        esac
+        shift
+    done
+    return 0
+}
+
+main "$@"
