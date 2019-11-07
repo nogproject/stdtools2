@@ -895,7 +895,7 @@ callStdhostAsUser() {
         genprgSameGitAuthorAtRemote &&
         genprgSameGitCommitterAsUser "${user}" &&
         tr -d '\r' <"${toolsdir}/lib/call/${cmd}"
-    ) | exec_ssh "${stdhost}" bash -s $(encodeArgs "$@")
+    ) | exec_ssh "${conn}" bash -s $(encodeArgs "$@")
 }
 
 # Try to add an ssh key when needed: if a user is explicitly given for the
