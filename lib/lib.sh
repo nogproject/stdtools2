@@ -59,6 +59,11 @@ git() {
     ( export LC_ALL=en_US.UTF-8 && exec 'git' "$@" )
 }
 
+# These keys are used in `DATAPLAN.md`
+purgeConfigKeyPrefix='Git-silo-'
+purgeConfigPathKey='Git-silo-purge-path'
+masterstoreKey='Git-silo-masterstore-stdrepo'
+
 # Two separate lists for Python modules and Pip requirements, since there is no
 # one-to-one correspondence.
 requiredPythonModules='
@@ -195,6 +200,16 @@ activateBundledBindirs() {
     fi
 }
 
+findDataplan() {
+    for p in DATAPLAN.md README-data.md; do
+        if [ -e "${p}" ]; then
+            printf '%s' "${p}"
+            return
+        fi
+    done
+    printf 'DATAPLAN.md'
+}
+
 # `isActiveLfsSsh` is true if the repo contains LFS filter attributes and LFS
 # SSH is not globally disabled.
 isActiveLfsSsh() {
@@ -222,6 +237,11 @@ gitattributesContainLfs() {
     fi
 
     return 0
+}
+
+hasConfigLfsStandalonetransferSsh() {
+    git config lfs.customtransfer.ssh.path \
+    | grep -q 'git-lfs-standalonetransfer-ssh'
 }
 
 hasLfsStandaloneTransferUrlPrefixConfig() {
@@ -368,7 +388,7 @@ repoFullnameFromURL2() {
 
 matchMappedUrl() {
     local url="$1"
-    git config --get-regexp '^stdtools[.]projectsPath[.].*$' \
+    git config --get-regexp '^stdtools[.]projectsPath[.][a-z0-9]*$' \
     | cut -d . -f 3- \
     | (
         while read -r project rootdir; do
@@ -526,6 +546,58 @@ egrepEscapePath() {
     sed -e 's/\./[.]/g' <<< "$1"
 }
 
+parseRemoteURL() {
+    local url host path
+
+    if ! url="$(git config remote.origin.url)"; then
+        die "Failed to get 'remote.origin.url'."
+    fi
+    case "$url" in
+        ssh://*)
+            host="$(cut -d / -f 3 <<<"${url}")"
+            path=/"$(cut -d / -f 4- <<<"${url}")"
+            ;;
+        /*)
+            host=localhost
+            path="$url"
+            ;;
+        *)
+            die "Unsupported url '${url}'."
+            ;;
+    esac
+    # Normalize multiple / at beginning of path.
+    path="$(sed -e 's@^//*@/@' <<<"${path}")"
+
+    if ! projects="$(cfg_projects)"; then
+        die 'Missing projects path.'
+    fi
+    ergxProjects="$(egrepEscapePath "${projects}")"
+
+    local ergxPath2013='^'"${ergxProjects}"'/[^/]+/[0-9]{4}/[0-9]{4}(-[0-9]{2})?_[^/_]+$'
+    local ergxPath2014='^'"${ergxProjects}"'/[^/]+/[0-9]{4}/([0-9]{2}_)?[^/_]+$'
+    local ergxPath2016='^'"${ergxProjects}"'/[^/]+/[0-9]{4}/[^/_]+(_[0-9]{2})?$'
+    local ergxPathTimeless='^'"${ergxProjects}"'/[^/]+/[a-zA-Z][a-zA-Z0-9-]*$'
+
+    if ! (
+        egrep -q "${ergxPath2013}" <<<"$path" \
+        || egrep -q "${ergxPath2014}" <<<"$path" \
+        || egrep -q "${ergxPath2016}" <<<"$path" \
+        || egrep -q "${ergxPathTimeless}" <<<"$path" \
+        || isListedNonStandardPath "${path}"
+    ); then
+        confirmWarning "
+The path of 'remote.origin.url' is '${path}'.  It
+does neither match the regex for 2013 '${ergxPath2013}'
+nor for 2014 and 2015 '${ergxPath2014}',
+nor for 2016 and later '${ergxPath2016}',
+nor for timeless repos '${ergxPathTimeless}',
+nor is it listed as a non-standard path in 'stdtools.projectsPath.*'.
+" "Do you want to continue"
+    fi
+
+    printf '%s:%s\n' "${host}" "${path}"
+}
+
 parseOriginUrlSsh() {
     local url host path
     if ! url=$(git config remote.origin.url); then
@@ -543,6 +615,19 @@ parseOriginUrlSsh() {
     # Normalize multiple slashes at beginning of path.
     path=$(sed -e 's@^//*@/@' <<<"${path}")
     printf '%s:%s\n' "${host}" "${path}"
+}
+
+isListedNonStandardPath() {
+    local path="$1"
+    git config --get-regexp '^stdtools[.]projectsPath[.][a-z0-9]*$' \
+    | (
+        while read -r _ root; do
+            if egrep -q "^$(egrepEscapePath "${root}")" <<<"${path}"; then
+                return 0
+            fi
+        done
+        return 1
+    )
 }
 
 haveChanges() {
@@ -575,6 +660,94 @@ isInsideWorkTree() {
 
 isTopLevelDir() {
     isInsideWorkTree && [ -z "$(git rev-parse --show-prefix 2>/dev/null)" ]
+}
+
+opt_yes=
+confirmNotice() {
+    printf >&2 '%s\n' "$1"
+    printf >&2 "%s [Y/n] ? " "$2"
+    if test ${opt_yes}; then
+        echo "assuming yes"
+        return 0
+    fi
+    read ans
+    [ "$ans" = n -o "$ans" = N ] && die "Missing confirmation."
+    true
+}
+
+confirmWarning() {
+    printf >&2 '%s\n' "$1"
+    printf >&2 "%s [y/N] ? " "$2"
+    if test ${opt_yes}; then
+        echo "assuming yes"
+        return 0
+    fi
+    read ans
+    [ "$ans" = Y -o "$ans" = y ] || die "Missing confirmation."
+    true
+}
+
+diffTreeSubmodules() {
+    local range="$1"
+    git diff-tree --no-renames --raw "${range}" \
+    | ( grep '^:160000 160000 ' || true )
+}
+
+diffTreeNumSubmodules() {
+    local range="$1"
+    diffTreeSubmodules "${range}" | wc -l | tr -d ' '
+}
+
+changesSubmodules() {
+    local range="$1"
+    diffTreeSubmodules "${range}" \
+    | while read -r aMode bMode aSha bSha op path; do
+        changesPath "${path}" "${aSha:0:10}..${bSha:0:10}" "${aSha}" "${bSha}"
+    done
+}
+
+changesPath() {
+    local path="$1"
+    local rangeHuman="$2"
+    local base="$3"
+    local head="$4"
+    local range nCommits nSignedOff nSigs signedOffWarn sigsWarn
+
+    range="${base}..${head}"
+    nCommits=$(git -C "${path}" rev-list --count --no-merges "${range}")
+    nSignedOff=$(git -C "${path}" rev-list --count --no-merges --grep '^Signed-off-by:' "${range}")
+    nSigs=$(
+        git -C "${path}" log --pretty='format:%G?' --no-merges "${range}" |
+        ( grep G || true ) | wc -l | tr -d ' '
+    )
+    signedOffWarn=
+    if [ ${nSignedOff} != ${nCommits} ]; then
+        signedOffWarn=", SOME NOT SIGNED-OFF"
+    fi
+    sigsWarn=
+    if [ ${nSigs} != ${nCommits} ]; then
+        sigsWarn=", SOME NOT GPG-SIGNED"
+    fi
+
+    echo
+    echo "in ${path} ${rangeHuman}: $(pluralize ${nCommits} commit) excluding merges, ${nSignedOff} signed-off, ${nSigs} gpg${signedOffWarn}${sigsWarn}"
+    git -C "${path}" diff --stat "${range}"
+    git -C "${path}" log --abbrev=10 --color=always --pretty='format:%C(auto)%h %G? %ae %d %s' "${range}"
+    echo
+    git -C "${path}" log --abbrev=10 --oneline --decorate --color=never --first-parent "${base}^..${base}"
+}
+
+pluralize() {
+    local n=$1
+    local stem=$2
+    case $n in
+    1)
+        printf '%d %s' "${n}" "${stem}"
+        ;;
+    *)
+        printf '%d %ss' "${n}" "${stem}"
+        ;;
+    esac
 }
 
 # `exec_ssh` works as `ssh` but uses PuTTY's plink if configured in `GIT_SSH`.

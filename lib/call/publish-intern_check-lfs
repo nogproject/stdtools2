@@ -1,0 +1,33 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+main() {
+    local masterpath="$1"
+    local pubbranch="$2"
+
+    cd "${masterpath}"
+    if ! checkRefHasAllLfs "${pubbranch}"; then
+        die "check-lfs failed."
+    fi
+    exitok
+}
+
+checkRefHasAllLfs() {
+    local pubbranch="$1"
+    local objs
+    objs=$(git rev-parse --git-path 'lfs/objects')
+    git lfs ls-files -l "${pubbranch}" | (
+        ec=0
+        while read -r sha _ path; do
+            if [ -e "${objs}/${sha:0:2}/${sha:2:2}/${sha}" ]; then
+                continue
+            fi
+            echo "error: missing LFS object ${sha} ${path}"
+            ec=1
+        done
+        exit ${ec}
+    )
+}
+
+main "$@"

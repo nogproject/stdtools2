@@ -1,0 +1,508 @@
+#!/bin/bash
+set -o errexit -o nounset -o pipefail -o noglob
+
+toolsdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)
+source "${toolsdir}/lib/lib.sh"
+
+releases=$(cfg_releases)
+dataplan=$(findDataplan)
+
+usage() {
+    cat <<\EOF
+Usage:
+  publish-intern [-f|--force] [-y|--yes]
+                 [--no-master-check] [--no-recurse-submodules-check]
+                 [<pubbranch>]
+
+Options:
+  <pubbranch>   Destination branch to publish to.  By convention, you should
+                use only branch names of format `<intials>/<name>`.  The
+                default is `<tools.pubbranch>` or `<user.initials>/master`.
+  -f|--force    Skip check for uncommitted changes or untracked files.
+  -y|--yes      Assume yes to all confirmations.
+  --no-master-check  Skip check whether other master branches are merged.
+  --no-recurse-submodules-check
+                Do not use --recurse-submodules=check on git push.
+  --skip-lfs-ssh  Skip LFS SSH push.  See warning below.
+
+`stdtools publish-intern` pushes HEAD to origin.
+
+Warning: `--skip-lfs-ssh` may cause incomplete data transfer.  It should be
+used rarely and only as a temporary workaround until the underlying problem has
+been fixed.
+
+Git LFS push via SSH will be skipped if there are no LFS changes relative to
+`origin/master` unless the Git config contains
+`tools.publish.skiplfsssh=never`.  Example:
+
+    git config tools.publish.skiplfsssh never
+    git -C releases config tools.publish.skiplfsssh never
+
+Pushing is restricted for some branches.  The multi-value Git config
+`stdtools.pushallow` can be set to an extended regular expression to explicitly
+allow branches.  Similarly, `stdtools.pushdeny` can be used to explicitly
+forbid branches, and also environment variable `STDTOOLS_PUSHDENY_DEFAULT`,
+which contains a colon-separated list of regular expressions.  The regular
+expressions are anchored and tested against:
+
+    <repo>/<subrepo>@<pubbranch>
+
+For example, the maintainer of `foo_nog_2019` can enable `publish-to-master`
+for subrepos `nog` and `noe` by:
+
+    cd foo_nog_2019
+    git config --add stdtools.pushallow "foo_nog_2019/nog@$(git config user.initials)/master"
+    git config --add stdtools.pushallow "foo_nog_2019/noe@$(git config user.initials)/master"
+
+EOF
+}
+
+haveWarnings=
+warn() {
+    haveWarnings=t
+    echo "Warning: $*"
+}
+
+main() {
+    argparse "$@"
+    activateToolsEnvChecked
+    config
+
+    if [ -n "${arg_pubbranch}" ]; then
+        egrep -q '^[a-z]{3}/.+$' <<<"${arg_pubbranch}" ||
+            warn "Unusual <pubbranch>; expected '<initials>/<name>'; got '${arg_pubbranch}'."
+        pubbranch="${arg_pubbranch}"
+    else
+        pubbranch="$(cfg_pubbranch)"
+    fi
+
+    checkMayPushPubbranch "$(getRepoCommonName2)" "${pubbranch}"
+
+    haveChanges &&
+        warn "Uncommited changes; commit everything before publish."
+    haveUntrackedFiles &&
+        warn "Untracked files; commit everything before publish."
+    isTopLevelDir ||
+        die "Wrong working directory; you must publish from the toplevel directory '$(git rev-parse --show-toplevel)'."
+
+    checkRemoteNotDeinit
+
+    fetch
+    if test ${opt_master_check}; then
+        verifyCanFFMasterBranches
+    fi
+    verifyCanPush
+
+    if test ${opt_master_check}; then
+        git symbolic-ref HEAD | grep -q master$ ||
+            warn "The current branch does not end with 'master'."
+    fi
+
+    if test ${haveWarnings} && ! test ${opt_force}; then
+        die 'There are warnings (see above).
+
+You should merge other master branches before publishing and publish from a
+branch named `<initials>/master`.  Alternatively, you can disabled the check
+with --no-master-check and ask someone else to merge the master branches.
+
+To resolve diverged branches for stdrepos and subrepos, you need to manually
+merge in the submodules and the supermodule.  See "Merging Submodule Changes"
+in the git book <https://goo.gl/0YPcJC> for guidance.
+
+You can use --force to ignore all warnings and publish anyway.
+'
+    fi
+
+    range='origin/master..HEAD'
+    isPurged=
+    if [ -e "${dataplan}" ] && grep -q "^${masterstoreKey}:" "${dataplan}"; then
+        isPurged=t
+    fi
+
+    confirmNotice "
+Will push HEAD ($(git symbolic-ref --short HEAD)) to branch '${pubbranch}' at remote 'origin':
+
+  - at host: ${masterhost}
+  - in directory: ${masterpath}
+$(
+    test ${isPurged} && cat <<EOF
+
+************************************************************************
+WARNING: skipping git silo, since ${dataplan} contains purge config.
+************************************************************************
+EOF
+)
+
+Changes in preparation for merge to origin/master in repo and $(pluralize $(diffTreeNumSubmodules "${range}") 'submodule'):
+$(changesPath '.' 'origin/master..' 'origin/master' 'HEAD')
+$(changesSubmodules "${range}")
+" "ok"
+
+    configRemoteAlternates
+    push
+
+    if ! (
+        callStdhost publish-intern_check-lfs "${masterpath}" "${pubbranch}"
+    ); then
+        die "LFS not ok at \`${masterhost}:${masterpath}\`."
+    fi
+
+    echo "    OK"
+    printf "Pushed to '%s' branch '%s'.\n" "$(git config remote.origin.url)" "${pubbranch}"
+}
+
+config() {
+    echo "    CONFIG"
+    local url
+    url="$(parseRemoteURL)" || die 'Failed to parse remote URL.'
+    IFS=: read -r masterhost masterpath <<<"${url}"
+}
+
+argparse() {
+    opt_force=
+    opt_yes=
+    opt_master_check=t
+    opt_recurse_submodules_check=t
+    arg_pubbranch=
+    while [ $# -ge 1 ]
+    do
+        case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -f|--force)
+            opt_force=t
+            ;;
+        -y|--yes)
+            opt_yes=t
+            ;;
+        --no-master-check)
+            opt_master_check=
+            ;;
+        --no-recurse-submodules-check)
+            opt_recurse_submodules_check=
+            ;;
+        --skip-lfs-ssh)
+            opt_global_skip_lfs_ssh=t
+            ;;
+        -*)
+            die "Unknown option $1"
+            ;;
+        *)
+            break
+            ;;
+        esac
+        shift
+    done
+    case $# in
+        0)
+            ;;
+        1)
+            arg_pubbranch="$1"
+            ;;
+        *)
+            die "Invalid number of arguments."
+            ;;
+    esac
+    return 0
+}
+
+cfg_pubbranch() {
+    local initials pubbranch
+    if pubbranch=$(git config tools.pubbranch); then
+        printf '%s\n' "${pubbranch}"
+    elif initials=$(git config user.initials); then
+        printf '%s/master\n' "${initials}"
+    else
+        die "Failed to determine ref to use for publishing."
+    fi
+}
+
+# Setup alternates.  Alternates are currently only configured for 'releases',
+# since it is expected to be most effective there, in particular for
+# collections of other releases.
+#
+# Configuring alternates is not yet supported in stdtools2.  We should
+# reconsider 2021 whether we port it from stdtools1 or drop it.
+configRemoteAlternates() {
+    echo "    CONFIG remote alternates (skipped in stdtools2)"
+}
+
+push() {
+    ( lsSubRepoDirs && echo '.' ) |
+    while read -r dir; do
+        echo "    PUSH ${dir} ${pubbranch}"
+        ( cd "${dir}" && pushCurrentDir ) || exit
+    done || exit
+}
+
+pushCurrentDir() {
+    pushLfs
+
+    git push origin \
+        $(
+            if test ${opt_recurse_submodules_check}; then
+                printf '%s' '--recurse-submodules=check'
+            else
+                printf '%s' '--recurse-submodules=no'
+            fi
+        ) \
+        --follow-tags \
+        --no-verify \
+        HEAD:refs/heads/${pubbranch}
+}
+
+pushLfs() {
+    if ! isActiveLfsSsh; then
+        echo '    NO lfs'
+        return
+    fi
+
+    if test ${isPurged}; then
+        echo '    SKIP lfs, purged'
+        return
+    fi
+
+    if isActiveLfsSsh; then
+        skip=
+        if [ "$(git config tools.publish.skiplfsssh)" = 'never' ]; then
+            echo '    YES active lfs via ssh; tools.publish.skiplfsssh=never.'
+        elif ! baseSha=$(git rev-parse -q --verify 'origin/master'); then
+            echo '    YES active lfs via ssh; no `origin/master`; assuming LFS changes.'
+        elif ! hasLfsChangesSince "${baseSha}"; then
+            echo '    SKIP active lfs via ssh; no new LFS content since `origin/master`.'
+            skip=t
+        else
+            echo '    YES active lfs via ssh; new LFS content since `origin/master`.'
+        fi
+        if ! test ${skip}; then
+            checkLfsSshConfig
+            if ! git lfs push origin HEAD; then
+                die 'Git LFS failed.'
+            fi
+        fi
+    else
+        echo '    NO lfs via ssh'
+    fi
+}
+
+hasLfsChangesSinceOriginMaster() {
+    local baseSha
+    baseSha=$(git rev-parse -q --verify 'origin/master') \
+    && hasLfsChangesSince ${baseSha}
+}
+
+checkLfsSshConfig() {
+    checkLfsSshConfigStandalone
+}
+
+checkLfsSshConfigStandalone() {
+    if ! hasValidLfsSshTransferStandalone; then
+        die "Invalid standalone SSH transfer config in \`$(pwd)\`.
+
+The reason can be an unexpected \`lfs.customtransfer.ssh.path\` or an invalid
+config for \`lfs.<url>.standalonetransferagent\`.
+
+Fix the LFS SSH setup; see \`git lfs-standalonetransfer-ssh -h\`.
+\`stdtools doctor --fix\` sould fix it automatically.
+
+"
+    fi
+}
+
+hasValidLfsSshTransferStandalone() {
+    hasConfigLfsStandalonetransferSsh \
+    && hasLfsStandaloneTransferUrlPrefixConfig
+}
+
+# `checkLfsNogHooks` warns about potential problems with the hook, hoping that
+# it gives sufficient guidance to users to manually fix problems.  We should
+# consider a more radical approach if it turns out to be confusing in practice.
+# We could maintain a standardized hook `lib/hooks/pre-push` and enforce it for
+# all stdrepos in the same way as we enforce the pre-commit hook.
+checkLfsNogHooks() {
+    local hook
+
+    hook="$(git rev-parse --git-path 'hooks/pre-push')"
+    if ! [ -e "${hook}" ]; then
+        echo "Warning: Missing pre-push hook.  You should run \`git lfs-nog init\` in \`$(pwd)\`."
+        return 0
+    fi
+
+    if ! grep -q 'GIT_LFS_NOG' "${hook}"; then
+        echo "Warning: The pre-push hook does not look like the LFS Nog hook.  You should run \`git lfs-nog init\` in \`$(pwd)\`."
+        return 0
+    fi
+}
+
+# Assume LFS changes if any modified path has a `filter=lfs` attribute,
+# ignoring deleted paths.
+#
+# DO NOT use `grep -q` but `>/dev/null` instead, since `-q` does not work
+# reliably in some environments for unknown reasons.
+hasLfsChangesSince() {
+    local base="$1"
+    git diff --name-only "${base}" HEAD \
+    | git check-attr --stdin filter \
+    | grep 'filter: lfs$' >/dev/null
+}
+
+verifyCanPush() {
+    ( echo '.' && lsSubRepoDirs ) |
+    while read -r dir; do
+        (
+            cd "${dir}"
+            canFastForward HEAD refs/remotes/origin/${pubbranch} ||
+                die "push to ${pubbranch} in '${dir}' is not a fast-forward."
+        ) || exit
+    done || exit
+}
+
+fetch() {
+    ( echo '.' && lsSubRepoDirs ) |
+    while read -r dir; do
+        echo "    FETCH ${dir}"
+        ( cd "${dir}" && git fetch ) || exit
+    done || exit
+}
+
+# It should be possible to fast-forward all master branches to HEAD to avoid
+# unexpecte merge conflicts.
+verifyCanFFMasterBranches() {
+    while read -r dir; do
+        [ -z "${dir}" ] && continue
+        # Avoid subshell to collect warnings.
+        pushd "${dir}" >/dev/null
+        verifyCanFFMasterBranchesCurrentDir
+        popd >/dev/null
+    done <<<"$(
+        echo '.'
+        lsSubRepoDirs
+    )"
+}
+
+verifyCanFFMasterBranchesCurrentDir() {
+    while read b; do
+        [ -z "${b}" ] && continue
+        if ! canFastForward HEAD ${b}; then
+            warn "branch '${b}' cannot be fast-forwarded to HEAD in '${dir}'."
+        fi
+    done <<<"$(
+            echo 'origin/master'
+            git branch --list -r origin/*/master
+        )"
+}
+
+checkMayPushPubbranch() {
+    local repo="$1"
+    local branch="$2"
+    local allow deny
+
+    case ${repo} in
+    */*)
+        die 'Denying to push a subrepo.'
+        ;;
+    esac
+
+    egrepArgsAllow=()
+    while read -r rgx; do
+        if [ -z "${rgx}" ]; then
+            continue
+        fi
+        egrepArgsAllow+=( -e "^${rgx}$" )
+    done < <(git config --get-all stdtools.pushallow || true)
+
+    egrepArgsDeny=()
+    while read -r rgx; do
+        if [ -z "${rgx}" ]; then
+            continue
+        fi
+        egrepArgsDeny+=( -e "^${rgx}$" )
+    done < <(git config --get-all stdtools.pushdeny || true)
+
+    egrepArgsDenyDefault=()
+    while read -r rgx; do
+        if [ -z "${rgx}" ]; then
+            continue
+        fi
+        egrepArgsDenyDefault+=( -e "^${rgx}$" )
+    done < <(tr ':' '\n' <<<"${STDTOOLS_PUSHDENY_DEFAULT:-}")
+
+    err=
+    check() {
+        local dst="$1"
+
+        if [ ${#egrepArgsAllow[@]} -gt 0 ]; then
+            if egrep -q "${egrepArgsAllow[@]}" <<<"${dst}"; then
+                echo "Push to '${dst}' allowed by stdtools.pushallow."
+                return
+            fi
+        fi
+
+        if [ ${#egrepArgsDeny[@]} -gt 0 ]; then
+            if egrep -q "${egrepArgsDeny[@]}" <<<"${dst}"; then
+                err=t
+                echo "Push to '${dst}' denied by stdtools.pushdeny."
+                return
+            fi
+        fi
+
+        if [ ${#egrepArgsDenyDefault[@]} -gt 0 ]; then
+            if egrep -q "${egrepArgsDenyDefault[@]}" <<<"${dst}"; then
+                err=t
+                echo "Push to '${dst}' denied by default rule; see 'stdtools publish-intern --help'."
+                return
+            fi
+        fi
+    }
+
+    # Always check the superrepo.  Check submodules only if they change.
+    check "${repo}@${branch}"
+    while read -r _ _ _ _ _ sub; do
+        if [ -z "${sub}" ]; then
+            continue
+        fi
+        check "${repo}/${sub}@${branch}"
+    done < <(diffTreeSubmodules 'origin/master..HEAD')
+
+    if test ${err}; then
+        die 'Push denied.'
+    fi
+}
+
+# `canFastForward <src> <dest>` tests whether <src> can be used to fast-forward
+# <dest>.
+canFastForward() {
+    # Ok if dest ref is unknown, since it can be created.
+    if ! git rev-parse -q --verify >/dev/null 2>&1 $2; then
+        return 0
+    fi
+    [ "$(git rev-list -n 1 $1..$2)" = '' ]
+}
+
+# `lsSubRepoDirs` lists relative paths to initialized submodules whose remote
+# URL is a subdirectory of the toplevel URL.
+lsSubRepoDirs() {
+    local topUrl="$(git config remote.origin.url)"
+    local path url
+    git submodule --quiet foreach 'printf "%s\n" "${path}"' |
+    while read -r path; do
+        url="$(cd "${path}" && git config remote.origin.url)"
+        if isPrefix "${topUrl}" "${url}"; then
+            printf '%s\n' "${path}"
+        fi
+    done
+}
+
+isPrefix() {
+    local prefix="$1"
+    local string="$2"
+    local len=${#prefix}
+    local head="${string:0:${len}}"
+    [ "${head}" = "${prefix}" ]
+}
+
+main "$@"
+
+# vim: sw=4
