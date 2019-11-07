@@ -11,8 +11,7 @@ dataplan=$(findDataplan)
 usage() {
     cat <<\EOF
 Usage:
-  publish-merge-to-master [-y|--yes] [--skip-additional]
-        [--skip-silo] [--skip-lfs-nog] [<commit>]
+  publish-merge-to-master [-y|--yes] [--skip-additional] [<commit>]
 
 Options:
   <commit>      Merge `<commit>` [default: HEAD].
