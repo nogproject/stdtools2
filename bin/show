@@ -13,11 +13,11 @@ Options:
   -h      Enable human-readable output.  Suffixes are used to indicate kilo,
           mega, and so on.
   --files|--no-files  [default: yes]
-          Enable or disable including head of important files in report
+          Enable or disable including head of important files in report.
   -n <lines>  [default: 40]
           Number of lines of imporant files to include
   --ls|--no-ls  [default: no]
-          Enable or disable including output of `git ls-files` in report
+          Enable or disable including output of `git ls-files` in report.
 
 `stdtools show` prints information about `<repo>`.  The default is the current
 repo. A single dot, `.`, also indicates the current repo.
