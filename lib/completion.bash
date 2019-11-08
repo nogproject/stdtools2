@@ -25,6 +25,7 @@ _stdtools2() {
     # Complete first arg to cmd.
     if (( ${COMP_CWORD} == 1 )); then
         local cmds='
+            build
             init-hooks
             publish-intern
             publish-merge-to-master
@@ -38,6 +39,23 @@ _stdtools2() {
 
     subcmd="${COMP_WORDS[1]}"
     case "${subcmd}" in
+    build)
+        case "${cur}" in
+        -*)
+            local opts='
+                -h --help
+                -v --verbose
+                -P --parallel
+                --tasks
+                --auto-fetch --no-auto-fetch
+                --auto-lfs-ssh --no-auto-lfs-ssh
+                --allow-dirty
+            '
+            COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+            return 0
+            ;;
+        esac
+        ;;
     publish-intern)
         case "${cur}" in
         -*)

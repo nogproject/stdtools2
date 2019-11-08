@@ -1,0 +1,194 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+toolsdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)
+source "${toolsdir}/lib/lib.sh"
+
+toolsconfig=$(cfg_toolsconfig)
+
+usage() {
+    cat <<\EOF
+Usage:
+  build [-v|--verbose] [-P|--parallel] [--tasks]
+        [--auto-fetch|--no-auto-fetch]
+        [--auto-lfs-ssh|--no-auto-lfs-ssh]
+        [--allow-dirty]
+
+Options:
+  --auto-lfs-ssh     Enable auto-lfs-ssh before build. (default)
+  --no-auto-lfs-ssh  Disable auto-lfs-ssh before build.
+  --auto-fetch       Enable all auto fetch.
+  --no-auto-fetch    Disable all auto fetch.  Default if Git config
+                     `stdtools.autofetch=no`.
+  -v --verbose       Print details about build commands.
+  -P --parallel      Build in parallel.
+  --allow-dirty      Allow --nog build with dirty working copy.  Prefer local
+                     builds until you have a clean commit.
+  --tasks            Print build tasks without executing them.
+
+`stdtools build` processes the workspace as configured in `.toolsconfig`.  A
+build usually compiles Markdown files with Pandoc and copies related images and
+data files to the output directory `product/`.  See below for a minimal
+`.toolsconfig`.
+
+The output format for `--tasks` is:
+
+```
+Stdtools-build-task: <command> [<options>] <path>
+```
+
+The output may contain other lines that must be ignored when parsing the output
+to compile a list of tasks.
+
+A minimal `.toolsconfig` to compile Markdown to HTML and copy PNGs and PDFs:
+
+```
+[build "pandoc"]
+    cmd = pandoc --no-self-contained
+    exclude = *.inc.md
+    include = *.md
+    exclude = *
+[build "copy"]
+    include = *.png
+    include = *.pdf
+```
+
+Two different stylesheets (`bootstrap` and `github`) can be used to compile
+Markdown to HTML, see `stdtools cmd-pandoc --help`.
+EOF
+}
+
+main() {
+    argparse "$@"
+
+    isTopLevelDir || die 'Must be run in the worktree toplevel directory.'
+
+    if test ${opt_verbose}; then
+      verbose='set -x'
+    else
+      verbose=true
+    fi
+
+    # `auto-lfs-ssh` first to avoid unnecessary Nog transfers.
+    if test ${opt_auto_lfs_ssh}; then
+        echo '    FETCH auto-lfs-ssh'
+        ( ${verbose} && "${toolsdir}"/bin/auto-lfs-ssh )
+    fi
+
+    if test ${opt_tasks}; then
+        foreachBuild "${toolsconfig}" cmdPrintTask '    TASKS %s\n'
+    else
+        buildLocal
+    fi
+
+    echo '    DONE build'
+}
+
+buildLocal() {
+    echo '    LOCAL product'
+    if test ${opt_parallel}; then
+        echo 'building in parallel...'
+        cc=cmdCmdBg
+    else
+        cc=cmdCmd
+    fi
+    foreachBuild "${toolsconfig}" ${cc} '    BUILD %s\n'
+    wait
+
+    echo '    FINISH product'
+    (
+      ${verbose} &&
+      "${toolsdir}"/bin/build-clean &&
+      "${toolsdir}"/bin/build-verify
+    )
+}
+
+cmdCmd() {
+    local cmd=$1
+    shift
+    ( ${verbose} && "${toolsdir}"/bin/cmd-${cmd} "$@" )
+}
+
+cmdCmdBg() {
+    local cmd=$1
+    shift
+    ( ${verbose} && "${toolsdir}"/bin/cmd-${cmd} "$@" ) &
+}
+
+cmdPrintTask() {
+    echo 'Stdtools-build-task:' "$@"
+}
+
+argparse() {
+    opt_auto_lfs_ssh=t
+    opt_verbose=
+    opt_parallel=
+    opt_tasks=
+    opt_nog=
+    opt_allow_dirty=
+
+    case "$(git config stdtools.autofetch)" in
+    true|yes)
+        opt_auto_lfs_ssh=t
+        ;;
+    false|no)
+        opt_auto_lfs_ssh=
+        echo >&2 'note: auto-fetch disabled due to Git config `stdtools.autofetch`.'
+        ;;
+    default)
+        echo >&2 'warning: invalid Git config `stdtools.autofetch`.'
+        ;;
+    esac
+
+    while [ $# -ge 1 ]
+    do
+        case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        --auto-lfs-ssh)
+            opt_auto_lfs_ssh=t
+            ;;
+        --no-auto-lfs-ssh)
+            opt_auto_lfs_ssh=
+            ;;
+        --auto-fetch)
+            opt_auto_lfs_ssh=t
+            ;;
+        --no-auto-fetch)
+            opt_auto_lfs_ssh=
+            ;;
+        -v|--verbose)
+            opt_verbose=t
+            ;;
+        -P|--parallel)
+            opt_parallel=t
+            ;;
+        --allow-dirty)
+            opt_allow_dirty=t
+            ;;
+        --tasks)
+            opt_tasks=t
+            ;;
+        -*)
+            die "unknown option $1"
+            ;;
+        *)
+            break
+            ;;
+        esac
+        shift
+    done
+    case $# in
+    0)
+        ;;
+    *)
+        die "Wrong number of arguments."
+        ;;
+    esac
+    return 0
+}
+
+main "$@"

@@ -1,0 +1,30 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+toolsdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)
+source "${toolsdir}/lib/lib.sh"
+
+product=$(cfg_product)
+
+[ -d "${product}" ] || exit 0
+
+echo "    VERIFY $product"
+find "${product}" -type f -size 41c | (
+    ret=true
+    while IFS= read -r path; do
+        if egrep -l '^[0-9a-f]{40}$' "${path}"; then
+            printf "Error: '%s' contains sha1 placeholder.\n" "${path}" >&2
+            ret=false
+        fi
+    done
+    ${ret}
+) || die "Found sha1 placeholders."
+
+
+if find "${product}" -name '.gitattributes' | grep '^.*$'; then
+    die "\`${product}/\` contains \`.gitattributes\`.
+
+Modify \`.toolsconfig\` such that \`.gitattributes\` are excluded from copying.
+"
+fi

@@ -71,6 +71,8 @@ main() {
             usage
             exit 0
             ;;
+        --no-self-contained) # For backwards compatibility with stdtools1
+            ;;
         --list)
             opt_list=t
             ;;

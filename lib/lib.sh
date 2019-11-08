@@ -321,6 +321,28 @@ configUnsetLfsStandalone() {
     done
 }
 
+# foreachBuild <toolsconfig> <applyfn> <format-string>
+#
+# Select files as specified in <toolsconfig> and call <applyfn> with the build
+# command.  Report each build section as printf '<format-string>'.
+foreachBuild() {
+    local toolsconfig=$1
+    local apply=$2
+    local fmt=$3
+    while IFS= read -r build; do
+        [ -n "${build}" ] || continue
+        printf "${fmt}" "${build}"
+        if ! cmd=$(git config --file "${toolsconfig}" build."${build}".cmd); then
+            cmd=$build
+        fi
+        selectFilesFor build "${build}" | processFiles $apply $cmd
+    done <<<"$(
+        git config --file "${toolsconfig}" --get-regex 'build\.' |
+        cut -d . -f 2 |
+        uniq
+    )"
+}
+
 # selectFilesFor <section> <subsection>
 #
 # Select lines on <stdin> that match <section>.<subsection>.[include|exclude]
@@ -393,8 +415,53 @@ selectWithRules() {
     done
 }
 
+# usage: lsFilesWithSubmodules
+#
+# Print all files in repo and submodules (recursively) to stdout.
+lsFilesWithSubmodules() {
+    # Select files from git ls-files's output, because ls-files prints
+    # submodules, although they are directories.
+    ( git ls-files && lsFilesInSubmodulesRecursive ) \
+    | selectRegularFiles
+}
+
+lsFilesInSubmodulesRecursive() {
+    case $(uname) in
+    MINGW*)
+        local wd="$(pwd -W)"
+        ;;
+    *)
+        local wd="$(pwd -P)"
+        ;;
+    esac
+
+    git submodule --quiet foreach --recursive \
+        'git ls-files | sed -e "s@^@$toplevel/$path/@"' \
+    | sed -e 's@^\([a-z]\):@/\1@' \
+    | sed -e "s@^${wd}/@@"
+}
+
 lsActiveSubmodulesRecursive() {
     git submodule foreach --recursive 'true' | cut -d "'" -f 2
+}
+
+selectRegularFiles() {
+    while IFS= read -r path; do
+        [ -z "${path}" ] && continue
+        [ -f "${path}" ] || continue
+        printf '%s\n' "${path}"
+    done
+}
+
+# usage: processFiles <cmd>...
+#
+# Call <cmd> for each line on stdin.
+processFiles() {
+    local src
+    while IFS= read -r src; do
+        [ -n "${src}" ] || continue
+        "$@" "$src"
+    done
 }
 
 # Like getVersion, but appends the detailed version info for tagged versions.

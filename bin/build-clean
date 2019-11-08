@@ -1,0 +1,121 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+toolsdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)
+source "${toolsdir}/lib/lib.sh"
+
+toolsconfig=$(cfg_toolsconfig)
+product=$(cfg_product)
+
+usage() {
+    cat <<EOF
+Usage:
+  build-clean [-n|--dry-run]
+
+Options:
+  -n|--dry-run  Only print what would be deleted.
+
+Remove unknown files from '${product}'.
+
+build-clean knows about files that are created by the supported build commands,
+such as 'pandoc' and 'copy'.  If other files should be kept, they can be
+declared in '${toolsconfig}' as paths relative to '${product}' using the
+supported patterns.  For example
+
+    [other]
+        include = /file-in-toplevel-product
+        include = anydeepersubdir/*.otherfiles
+
+EOF
+}
+
+main() {
+    opt_dry_run=
+    while [ $# -gt 0 ]; do
+        case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -n|--dry-run)
+            opt_dry_run=t
+            ;;
+        -*)
+            die "Unknown option $1"
+            ;;
+        *)
+            break
+            ;;
+        esac
+        shift
+    done
+
+    echo "    CLEAN ${product}"
+    clean
+}
+
+clean() {
+    # List files produced by cmd-* and other files that might be declared in
+    # `.toolsconfig` and tag them with 1.
+    #
+    # Then list files in product and tag them with 2.
+    #
+    # Sort stable on path to bring 1 files immediately before the correponding
+    # 2 files.  Scan and delete all 2 files that do not have a 1 file right in
+    # front.
+    (
+        (
+            foreachBuild "${toolsconfig}" cmdList ''
+            listOther
+        ) | sed -e 's/^/1 /'
+        find "${product}" -type f | sed -e 's/^/2 /'
+    ) | sort -k 2 --stable | (
+        hold=
+        while read -r which path; do
+            case ${which} in
+            1)
+                hold="${path}"
+                ;;
+            2)
+                [ "${hold}" == "${path}" ] && continue
+                if test ${opt_dry_run}; then
+                    echo "    would RM unknown ${path}"
+                else
+                    echo "    RM unknown ${path}"
+                    rm -f "${path}"
+                fi
+                ;;
+            esac
+        done
+    )
+}
+
+cmdList() {
+    local cmd=$1
+    shift
+    "${toolsdir}"/bin/cmd-${cmd} --list "$@"
+}
+
+listOther() {
+    local rules
+
+    # Get rules from 'other' section.
+    if ! rules=$(
+        git config --file "${toolsconfig}" --get-regex 'other\.(include|exclude)' |
+        cut -d '.' -f 2-
+    ); then
+        # git config fails if there are no matching entries.
+        return
+    fi
+
+    # List files in product that match rules and add product dir.
+    (
+        cd ${product}
+        find . -type f | cut -b 3-
+    ) |
+    selectWithRules "$rules" |
+    sed -e "s@^@${product}/@"
+}
+
+main "$@"
