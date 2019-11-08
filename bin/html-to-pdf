@@ -1,0 +1,140 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+toolsdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)
+source "${toolsdir}/lib/lib.sh"
+
+usage() {
+    cat <<\EOF
+Usage:
+  html-to-pdf [--portrait|--landscape] <html> [<pdf>]
+
+Options:
+  --portrait    Use portrait orientation (default).
+  --landscape   Use landscape orientation.
+
+`stdtools html-to-pdf` converts HTML to PDF.  The HTML source may be a URL.
+The default PDF filename is the basename of the HTML source with the extension
+replaced by `.pdf`.
+
+`stdtools html-to-pdf` requires `wkhtmltopdf`, which you can install on macOS
+with:
+
+    brew cask install wkhtmltopdf
+
+Do not use v0.12.4 on macOS.  It renders PDFs with unexpectedly tiny fonts.
+The issue has been fixed in v0.12.5.  See release notes
+<https://github.com/wkhtmltopdf/wkhtmltopdf/blob/master/CHANGELOG.md#v0125-unreleased>
+and PR-3386 <https://github.com/wkhtmltopdf/wkhtmltopdf/pull/3386>.
+EOF
+}
+
+main() {
+    argparse "$@"
+
+    wkhtmltopdfDetect
+
+    # Use a large delay to give MathJAX enough time.  The delay could probably
+    # be reduced.  The default, however, did not reliably work.
+    echo "    PDF ${arg_pdf}"
+    wkhtmltopdf \
+      --orientation ${opt_orientation} \
+      --javascript-delay 2000 \
+      "${arg_html}" "${arg_pdf}"
+}
+
+argparse() {
+    arg_html=
+    arg_pdf=
+    opt_orientation=portrait
+    while [ $# -ge 1 ]
+    do
+        case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        --portrait)
+            opt_orientation=portrait
+            ;;
+        --landscape)
+            opt_orientation=landscape
+            ;;
+        -*)
+            die "unknown option $1"
+            ;;
+        *)
+            break
+            ;;
+        esac
+        shift
+    done
+    case $# in
+    1)
+        arg_html="$1"
+        arg_pdf="$(basename ${arg_html} .html).pdf"
+        ;;
+    2)
+        arg_html="$1"
+        arg_pdf="$2"
+        ;;
+    *)
+        die "Wrong number of arguments."
+        ;;
+    esac
+    return 0
+}
+
+wkhtmltopdfDetect() {
+    local ver
+    if ! ver="$(wkhtmltopdfVersion)"; then
+        ver='unknown version'
+        echo >&2 'Warning: Failed to determine wkhtmltopdf version; continuing anyway.'
+    fi
+
+    case $(uname) in
+    Darwin)
+        case ${ver} in
+        0.12.3|0.12.5)  # Known to work.
+            ;;
+
+        0.12.4)  # Known to produce broken PDFs.
+            cat <<EOF
+Error: Found wkhtmltopdf ${ver}, which is known to produce wrong results.
+Install a version that is known to work:
+
+    brew cask uninstall wkhtmltopdf
+    brew cask install '${toolsdir}/lib/cask/wkhtmltopdf.rb'
+
+EOF
+            die 'Found broken wkhtmltopdf version.'
+            ;;
+
+        *)  # Unclear whether it works.
+            cat <<EOF
+Warning: Found wkhtmltopdf ${ver}, which may or may not work.
+Consider installing a version that is known to work:
+
+    brew cask uninstall wkhtmltopdf
+    brew cask install '${toolsdir}/lib/cask/wkhtmltopdf.rb'
+
+Continuing anyway.
+EOF
+            ;;
+        esac
+        ;;
+
+    *)
+        # Be silent on other platforms.  There is no indication that they are
+        # affected by a similar rendering problem.
+        ;;
+    esac
+}
+
+wkhtmltopdfVersion() {
+    wkhtmltopdf --version \
+    | head -n 1 | grep '^wkhtmltopdf ' | cut -d ' ' -f 2
+}
+
+main "$@"

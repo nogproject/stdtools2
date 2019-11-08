@@ -26,6 +26,7 @@ _stdtools2() {
     if (( ${COMP_CWORD} == 1 )); then
         local cmds='
             build
+            html-to-pdf
             init-hooks
             publish-intern
             publish-merge-to-master
@@ -50,6 +51,18 @@ _stdtools2() {
                 --auto-fetch --no-auto-fetch
                 --auto-lfs-ssh --no-auto-lfs-ssh
                 --allow-dirty
+            '
+            COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+            return 0
+            ;;
+        esac
+        ;;
+    html-to-pdf)
+        case "${cur}" in
+        -*)
+            local opts='
+                -h --help
+                --portrait --landscape
             '
             COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
             return 0
