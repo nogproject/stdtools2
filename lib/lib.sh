@@ -445,6 +445,19 @@ lsActiveSubmodulesRecursive() {
     git submodule foreach --recursive 'true' | cut -d "'" -f 2
 }
 
+lsLfsSubmodulesRecursiveIncludingSuper() {
+    if hasLfsObjects; then
+        echo .
+    fi
+
+    lsActiveSubmodulesRecursive \
+    | while IFS= read -r path; do
+        if ( cd "${path}" && hasLfsObjects ); then
+            printf '%s\n' "${path}"
+        fi
+    done
+}
+
 selectRegularFiles() {
     while IFS= read -r path; do
         [ -z "${path}" ] && continue
