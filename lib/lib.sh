@@ -83,6 +83,15 @@ pipRequirements='
 expectedLfsTransferSshSemver='0.4.0'
 expectedLfsStandaloneTransferSshSemver='0.4.0'
 
+# Parameters that control `foreachAlternateCandidate`.
+#
+# `timelessYears` contains a few recent year.
+# Update it in 2020 to '2017 2018 2019 2020'.
+timelessYears='2017 2018 2019'
+# `activeCiRepos` lists the previous and the current CI repo.  CI is not
+# supported by stdtools2.
+activeCiRepos=
+
 # `opt_global_skip_*` can be used to globally disable LFS code paths.  The
 # mechanism will be incrementally implement over time.
 opt_global_skip_lfs_ssh=
@@ -309,6 +318,78 @@ configUnsetLfsStandalone() {
     ) \
     | while read -r -d '' k v; do
         git config --local --unset "${k}"
+    done
+}
+
+# selectFilesFor <section> <subsection>
+#
+# Select lines on <stdin> that match <section>.<subsection>.[include|exclude]
+# rules in .toolsconfig.
+selectFilesFromStdinFor() {
+    local section=$1
+    local subsection=$2
+    local rules
+    local cfg
+    local nl=$'\n'
+
+    # First check whether file exists; then assume that `git config` error
+    # below means that the section is not configured.
+    [ -e '.toolsconfig' ] || die 'Missing `.toolsconfig`.'
+
+    # /releases/* is explicitly excluded, because files in the submodule
+    # releases are tracked in git.  Files in product need not be explicitly
+    # excluded, because they are never tracked in git and will not be listed by
+    # lsFilesWithSubmodules.
+    rules="exclude /releases/*${nl}"
+
+    # Exclude `*` if <section>.<subsection> is not in `.toolsconfig`.
+    if cfg=$(git config --file .toolsconfig --get-regex \
+             "${section}"'\.'"${subsection}"'\.(include|exclude)'); then
+        rules="${rules}$(
+            cut -d '.' -f 3- <<<"${cfg}"
+        )${nl}"
+    else
+        rules=$'exclude *\n'
+    fi
+    selectWithRules "$rules"
+}
+
+selectFilesFor() {
+    lsFilesWithSubmodules |
+    selectFilesFromStdinFor "$@"
+}
+
+selectWithRules() {
+    local rules="$1"
+    local path ruletype pattern
+    while IFS= read -r path; do
+        [ -n "${path}" ] || continue
+        while IFS=' ' read -r ruletype pattern; do
+            [ -n "${ruletype}" ] || continue
+            if [ "${pattern:0:1}" != '/' ] && [ "${pattern:0:1}" != '*' ]; then
+                pattern="*/${pattern}"
+            fi
+            case "/${path}" in
+                $pattern)
+                    # match, evaluate ruletype below.
+                    ;;
+                *)
+                    # no match, continue with next rule.
+                    continue
+                    ;;
+            esac
+            case "${ruletype}" in
+                include)
+                    printf '%s\n' "${path}"
+                    ;;
+                exclude)
+                    ;;
+                *)
+                    die "Invalid ruletype ${ruletype}."
+                    ;;
+            esac
+            break
+        done <<<"$rules"
     done
 }
 
@@ -595,6 +676,34 @@ split() {
     sed -e "s@$1@ @g" <<<"$2"
 }
 
+# `configLfsAlternates` sets silo.alternate in releases to point to all
+# submodules with silo except releases itself.
+configLfsAlternates() {
+    local releases subdir
+    releases=$(cfg_releases)
+    if ! isGitWorktreeRoot "${releases}"; then
+        return 0
+    fi
+    lsLfsSubmodulesRecursiveIncludingSuper \
+    | ( grep -v "^${releases}$" || true ) | (
+        cd "${releases}" &&
+        while IFS= read -r subdir; do
+            [ -z "${subdir}" ] && continue
+            p="../${subdir}"
+            git config lfs.weakalternate "${p}" "^$(egrepEscapePath "${p}")$"
+        done
+    )
+}
+
+# `isGitWorktreeRoot <dir>` tests whether `<dir>` is the root dir of a git
+# work tree.
+isGitWorktreeRoot() {
+    local prefix
+    [ -d "$1" ] &&
+    prefix="$(cd "$1" && git rev-parse --show-prefix 2>/dev/null)" &&
+    [ -z "${prefix}" ]
+}
+
 # `egrepEscapePath <string>` quotes special regex chars that are common in
 # paths such that egrep matches them without special meaning.
 egrepEscapePath() {
@@ -765,6 +874,10 @@ isInsideWorkTree() {
 
 isTopLevelDir() {
     isInsideWorkTree && [ -z "$(git rev-parse --show-prefix 2>/dev/null)" ]
+}
+
+hasLfsObjects() {
+    [ -d "$(git rev-parse --git-path 'lfs/objects')" ]
 }
 
 linkCount() {
@@ -1157,6 +1270,143 @@ If you already have installed Git LFS, you need to manually update your
 `.gitconfig`.
 '
 }
+
+# Try to determine previous repo generations by parsing version.inc.md.  Take
+# the paragraph starting from 'Previous generations'.  Convert backticks to
+# newlines, so that full repo names are on separate lines.  Then grep for them.
+previousRepoGenerations() {
+    local versioninc='version.inc.md'
+    [ -f "${versioninc}" ] || return 0
+    sed -n '/^Previous generations/,/^ *$/p' "${versioninc}" |
+    tr '`' '\n' |
+    ( grepRepoFullname || true )
+}
+
+# Heuristic to find potential alternates: Walk from the current directory
+# towards the root and check at each level whether a subdir `<year>/<repo>`
+# exits.  Don't walk too far in order to stay on the same file system so that
+# hardlinks work.  Avoid alternates to self.
+#
+# Based on the assumption that copying is expensive, we add many alternates in
+# order to increase the chance that a hardlink can be used.  Specifically,
+# alternates tries:
+#
+#  - the current ci repo.
+#  - previous repo generations.
+#  - releases of the super repo.
+#
+foreachAlternateCandidate() {
+    local callback="$1"
+    local subPath="$2"
+    shift 2
+    local year superRepoYear repo dir device
+    if [ "${subPath}" == '.' ]; then
+        shift  # Skip self
+    fi
+    repo=$(getRepoCommonName2)
+    case "${repo}" in
+    unknown)
+        return
+        ;;
+    */*)
+        return
+        ;;
+    esac
+    read _ _ _ year _ <<<"$(parseRepoName ${repo})"
+    dir="$(pwd -P)"
+    device=$(statDevice "${dir}")
+    while [ "${dir}" != '/' ] \
+        && dir="$(dirname "${dir}")" \
+        && [ "$(statDevice "${dir}")" = "${device}" ];
+    do
+        echo "Considering repos relative to '${dir}'."
+        if [ -n "${year}" ]; then
+            ${callback} "${dir}/${year}/${repo}"
+            for ci in ${activeCiRepos}; do
+                ${callback} "${dir}/${ci}/${year}/${repo}"
+            done
+        else
+            for y in ${timelessYears}; do
+                ${callback} "${dir}/${y}/${repo}"
+                for ci in ${activeCiRepos}; do
+                    ${callback} "${dir}/${ci}/${y}/${repo}"
+                done
+            done
+        fi
+        if [ "${subPath}" == '.' ]; then
+            for superRepo in "$@"; do
+                read _ _ _ superRepoYear _ <<<"$(parseRepoName ${superRepo})"
+                if [ -n "${superRepoYear}" ]; then
+                    ${callback} "${dir}/${superRepoYear}/${superRepo}"
+                    ${callback} "${dir}/${superRepoYear}/${superRepo}/releases"
+                    for ci in ${activeCiRepos}; do
+                        ${callback} "${dir}/${ci}/${superRepoYear}/${superRepo}"
+                        ${callback} "${dir}/${ci}/${superRepoYear}/${superRepo}/releases"
+                    done
+                else
+                    for y in ${timelessYears}; do
+                        ${callback} "${dir}/${y}/${superRepo}"
+                        ${callback} "${dir}/${y}/${superRepo}/releases"
+                        for ci in ${activeCiRepos}; do
+                            ${callback} "${dir}/${ci}/${y}/${superRepo}"
+                            ${callback} "${dir}/${ci}/${y}/${superRepo}/releases"
+                        done
+                    done
+                fi
+            done
+        else
+            for superRepo in "$@"; do
+                read _ _ _ superRepoYear _ <<<"$(parseRepoName ${superRepo})"
+                if [ -n "${superRepoYear}" ]; then
+                    ${callback} "${dir}/${superRepoYear}/${superRepo}/${subPath}"
+                    ${callback} "${dir}/${superRepoYear}/${superRepo}/releases"
+                    for ci in ${activeCiRepos}; do
+                        ${callback} "${dir}/${ci}/${superRepoYear}/${superRepo}/${subPath}"
+                        ${callback} "${dir}/${ci}/${superRepoYear}/${superRepo}/releases"
+                    done
+                else
+                    for y in ${timelessYears}; do
+                        ${callback} "${dir}/${y}/${superRepo}/${subPath}"
+                        ${callback} "${dir}/${y}/${superRepo}/releases"
+                        for ci in ${activeCiRepos}; do
+                            ${callback} "${dir}/${ci}/${y}/${superRepo}/${subPath}"
+                            ${callback} "${dir}/${ci}/${y}/${superRepo}/releases"
+                        done
+                    done
+                fi
+            done
+        fi
+    done
+}
+
+# `statDevice <dir>` prints a device id that can be used to determine whether
+# hard links can be used between two directories.
+#
+# A path prefix is used as a fallback, since I(spr) am unsure how stat works on
+# Windows.  The prefix should correctly detect the same device under the
+# assumption that paths on the same Windows drive can use hard links and the
+# Windows drive is represented in the first part of the path.
+#
+# - path c:/foo/bar -> id c:/
+# - path /c/foo/bar -> id /c/
+#
+case $(uname -s) in
+Linux)
+    statDevice() {
+        stat -c '%d' "$1"
+    }
+    ;;
+Darwin)
+    statDevice() {
+        stat -f '%d' "$1"
+    }
+    ;;
+*)
+    statDevice() {
+        ( cd "${1}" && pwd -P | sed -e 's@^\(/*[^/]*/\).*@\1@' )
+    }
+    ;;
+esac
 
 checkPython3() {
     if export | grep PYTHONPATH.*2.7; then

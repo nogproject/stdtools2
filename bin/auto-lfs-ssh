@@ -1,0 +1,229 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+toolsdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)
+source "${toolsdir}/lib/lib.sh"
+
+releases=$(cfg_releases)
+
+usage() {
+    cat <<\EOF
+Usage:
+  auto-lfs-ssh [--alternates|--no-alternates]
+
+Options:
+  --alternates|--no-alternates  [default: yes]
+        Try to configure LFS alternates to other local repositories in order to
+        use local hardlinks if possible instead of fetching from origin.
+
+`stdtools auto-lfs-ssh` automatically fetches Git LFS content that is required
+by `stdtools build`.
+EOF
+}
+
+main() {
+    argparse "$@"
+    activateToolsEnv
+
+    test ${opt_alternates} && configLfsAlternatesExt
+
+    # Configures alternates from releases to the submodules even with
+    # --no-alternates.
+    configLfsAlternates
+
+    echo "    FETCH"
+    submoduleRelPaths | processSubmodules
+    echo "    DONE auto-lfs-ssh"
+}
+
+argparse() {
+    opt_alternates=t
+    while [ $# -ge 1 ]
+    do
+        case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        --alternates)
+            opt_alternates=t
+            ;;
+        --no-alternates)
+            opt_alternates=
+            ;;
+        -*)
+            die "unknown option $1"
+            ;;
+        *)
+            break
+            ;;
+        esac
+        shift
+    done
+    return 0
+}
+
+submoduleRelPaths() {
+    echo .
+    lsActiveSubmodulesRecursive
+}
+
+# Process `releases` last to use as many alternates as possible.
+processSubmodules() {
+    local haveReleases=
+    while IFS= read -r dir; do
+        if ! ( cd "${dir}" && isActiveLfsSsh ); then
+            echo "Skipping '${dir}' without active LFS SSH."
+            continue
+        fi
+
+        if [ "${dir}" == "${releases}" ]; then
+            haveReleases=t
+            continue
+        fi
+
+        files="$(
+            lsPlaceholdersForSubsectionInSubmodule "${dir}" 'copy'
+            lsPlaceholdersForSubsectionInSubmodule "${dir}" 'pandoc'
+            lsPlaceholdersForSubsectionInSubmodule "${dir}" 'unpack'
+        )"
+        if [ -z "${files}" ]; then
+            printf "Already up-to-date in '%s'.\n" "${dir}"
+            continue
+        else
+            printf "Processing '%s'\n" "${dir}"
+        fi
+
+        # XXX `git lfs fetch` accepts only a single `-I` to limit the fetch.
+        # The argument is a comma-separated list of path patterns.  Spaces are
+        # not correctly handled and, therefore, replaced by `?`.  The command
+        # below might work reasonably well.  Ideally we would extend Git LFS to
+        # support a `-- <files>...` argument as other tools do.
+        #
+        # Run `lfs-x link --ignore-missing` first to create as many local links
+        # as possible before fetching from the remote.
+
+        (
+            cd "${dir}"
+            xargsnl <<<"${files}" bash -c '
+                set -o errexit -o pipefail -o nounset -o noglob
+
+                git lfs-x link --ignore-missing -- "$@" \
+                | grep -v "^lfs-x: Ignored missing" \
+                || true
+
+                include="$(printf "%s," "$@" | sed -e "s/,$//" | tr " " "?")"
+                git lfs fetch -I ${include}
+                git lfs-x link -- "$@"
+            ' --
+        )
+    done
+
+    if ! test ${haveReleases}; then
+        return 0
+    fi
+    printf "Processing '%s'\n" "${releases}"
+    (
+        cd "${releases}" &&
+        if [ -z "$(lsPlaceholders)" ]; then
+            printf "Already up-to-date in '%s'\n" "${releases}"
+        else
+            if git lfs-x link --ignore-missing -- '.' \
+                | grep -qi "^lfs-x: Ignored missing";
+            then
+                git lfs fetch origin
+                git lfs-x link -- .
+            fi
+        fi
+    )
+}
+
+lsPlaceholdersForSubsectionInSubmodule() {
+    local dir="$1"
+    local subsection="$2"
+    ( cd "${dir}" && lsPlaceholders ) \
+    | prependDir \
+    | selectFilesFromStdinFor build ${subsection} \
+    | stripDir
+}
+
+lsPlaceholders() {
+    git lfs ls-files --long | cut -b 66- \
+    | ( grep '^-' || true ) \
+    | cut -d ' ' -f 2-
+}
+
+prependDir() {
+    local path
+    while IFS= read -r path; do
+        [ -z "${path}" ] && continue
+        if [ "${dir}" == "." ]; then
+            printf '%s\n' "${path}"
+        else
+            printf '%s/%s\n' "${dir}" "${path}"
+        fi
+    done
+}
+
+stripDir() {
+    local path n
+    if [ "${dir}" == "." ]; then
+        n=0
+    else
+        n=$((${#dir} + 1))
+    fi
+    while IFS= read -r path; do
+        [ -z "${path}" ] && continue
+        printf '%s\n' "${path:$n}"
+    done
+}
+
+# xargs with one argument per line.
+xargsnl() {
+    tr '\n' '\0' | xargs -0 "$@"
+}
+
+configLfsAlternatesExt() {
+    echo "    ALTERNATES lfs"
+
+    local superRepos
+    local superRepos=$(getRepoCommonName2)
+    case "${superRepos}" in
+    unknown)
+        superRepos=
+        ;;
+    */*)
+        superRepos=
+        ;;
+    esac
+    superRepos="${superRepos} $(previousRepoGenerations)"
+
+    echo "Trying alternates to repos:" ${superRepos}
+    submoduleRelPaths |
+    while IFS= read -r path; do (
+        cd "${path}"
+        if ! hasLfsObjects; then
+            continue
+        fi
+
+        foreachAlternateCandidate addAlternatePathIfExists \
+            "${path}" ${superRepos}
+    ) || return 1; done
+}
+
+addAlternatePathIfExists() {
+    local path="$1"
+    local wd="$(pwd -P)"
+    [ "${path}" = "${wd}" ] && return  # Avoid alternate to self.
+    # echo "DEBUG trying alternate '${repo}' -> '${path}'."
+    if [ -d "${path}" ]; then
+        if ! git config --get lfs.weakalternate "^${path}$" >/dev/null; then
+          echo "adding alternate '${repo}' -> '${path}'."
+          git config --add lfs.weakalternate "${path}"
+        fi
+    fi
+}
+
+
+main "$@"
