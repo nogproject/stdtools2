@@ -1,0 +1,106 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+toolsdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)
+source "${toolsdir}/lib/lib.sh"
+
+product=$(cfg_product)
+
+usage() {
+    cat <<\EOF
+Usage:
+  cmd-copy [--list] <file>...
+
+Options:
+  --list    Print files that would be created instead of copying.
+
+Copy files to product directory, using hard links as much as possible.
+EOF
+}
+
+main() {
+    opt_list=
+    while [ $# -gt 0 ]; do
+        case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        --list)
+            opt_list=t
+            ;;
+        -*)
+            die "Unknown option $1"
+            ;;
+        *)
+            break
+            ;;
+        esac
+        shift
+    done
+
+    for f in "$@"; do
+        cmdCopy "${f}"
+    done
+}
+
+cmdCopy() {
+    local src="$1"
+    local dest="${product}/${src}"
+
+    if test $opt_list; then
+        printf '%s\n' "${dest}"
+        return
+    fi
+
+    mkdir -p "$(dirname "${dest}")"
+
+    # Check permission to contain Windows behavior that deleting hard link
+    # changes file to writable.
+    if [ -w "${src}" ] && isHardLink "${src}"; then
+        printf >&2 "Warning: fixing permission to read-only for hard link '%s'.\n" "${src}"
+        chmod a-w "${src}" || true
+    fi
+
+    # If src is read-only, create hard link to save space.
+    if [ -w "${src}" ]; then
+        # Skip if src is not newer.
+        if ! [ "${src}" -nt "${dest}" ]; then
+            return
+        fi
+
+        echo "    CP ${dest}"
+
+        # If src is in silo, it should be linked to save space and get fast
+        # incremental releases.
+        case $(getAttr filter "${src}") in
+        lfs)
+            printf 'Warning: `%s` should be read-only, because it is handled by git LFS; to fix it: git lfs-x checkout --link -- %s\n' "${src}" "${src}"
+            ;;
+        silo)
+            printf 'Warning: `%s` should be read-only, because it is handled by git silo; to fix it: git silo checkout --link -- %s\n' "${src}" "${src}"
+            ;;
+        esac
+
+        cp -f "${src}" "${dest}"
+    else
+        # Skip if src and dest point to the same inode.
+        if [ "${src}" -ef "${dest}" ]; then
+            return
+        fi
+
+        echo "    LN ${dest}"
+        ln -f "${src}" "${dest}"
+    fi
+}
+
+getAttr() {
+    local attr="$1"
+    local path="$2"
+    # check-attr's output is `<path> COLON SP <attribute> COLON SP <info> LF`.
+    # Split on `COLON` and remove `SP` to handle path with spaces.
+    git check-attr "${attr}" "${path}" | cut -d : -f 3 | cut -b 2-
+}
+
+main "$@"

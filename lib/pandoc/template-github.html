@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="$lang$" xml:lang="$lang$"$if(dir)$ dir="$dir$"$endif$>
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+$for(author-meta)$
+  <meta name="author" content="$author-meta$" />
+$endfor$
+$if(date-meta)$
+  <meta name="dcterms.date" content="$date-meta$" />
+$endif$
+$if(keywords)$
+  <meta name="keywords" content="$for(keywords)$$keywords$$sep$, $endfor$" />
+$endif$
+  <title>$if(title-prefix)$$title-prefix$ – $endif$$pagetitle$</title>
+  <style type="text/css">
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    span.underline{text-decoration: underline;}
+    div.column{display: inline-block; vertical-align: top; width: 50%;}
+$if(quotes)$
+      q { quotes: "“" "”" "‘" "’"; }
+$endif$
+  </style>
+$if(highlighting-css)$
+  <style type="text/css">
+    $highlighting-css$
+  </style>
+$endif$
+$for(css)$
+  <link rel="stylesheet" href="$css$">
+$endfor$
+$if(math)$
+  $math$
+$endif$
+  <!--[if lt IE 9]>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/html5shiv/3.7.3/html5shiv-printshiv.min.js"></script>
+  <![endif]-->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/2.10.0/github-markdown.css">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    .markdown-body {
+      box-sizing: border-box;
+      min-width: 200px;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 5px;
+    }
+    .status-danger {
+      background-color:#f2dede;
+      color:#a94442;
+      padding: 10px;
+    }
+    .status-warning {
+      background-color:#fcf8e3;
+      color:#8a6d3b;
+      padding: 10px;
+    }
+    .status-info {
+      background-color:#d9edf7;
+      color:#31708f;
+      padding: 10px;
+    }
+    a.sourceLine {
+      pointer-events: all;
+      color: inherit !important;
+      text-decoration: none !important;
+    }
+    @media print {
+      a[href]:after {
+        content: none;
+      }
+    }
+    pre.bg-info {
+      background-color: #d9edf7;
+    }
+    pre.bg-warning {
+      background-color: #fcf8e3;
+    }
+    pre.bg-danger {
+      background-color: #f2dede;
+    }
+    div.alert {
+      padding: 15px;
+      margin-bottom: 20px;
+      border: 1px solid transparent;
+      border-radius: 4px;
+    }
+    div.alert > p {
+      margin-bottom: 0;
+    }
+    div.alert-info {
+      background-color: #d9edf7;
+      border-color: #bce8f1;
+      color: #31708f;
+    }
+    div.alert-warning {
+      background-color: #fcf8e3;
+      border-color: #faebcc;
+      color: #8a6d3b;
+    }
+    div.alert-danger {
+      background-color: #f2dede;
+      border-color: #ebccd1;
+      color: #a94442;
+    }
+  </style>
+$for(header-includes)$
+  $header-includes$
+$endfor$
+</head>
+<body id="top">
+<div class="markdown-body">
+$for(include-before)$
+$include-before$
+$endfor$
+$if(statusNote)$
+<div class="alert $statusClass$">
+<h1>$statusTitle$</h1>
+$statusNote$
+</div>
+$endif$
+$if(title)$
+<header>
+<h1 class="title">$title$</h1>
+$if(subtitle)$
+<p class="subtitle">$subtitle$</p>
+$endif$
+$for(author)$
+<p class="author">$author$</p>
+$endfor$
+$if(date)$
+<p class="date">$date$
+$if(versionNote)$
+<a href="#versionNote"><sup>*</sup></a>
+$endif$
+</p>
+$endif$
+</header>
+$endif$
+$if(toc)$
+<nav id="$idprefix$TOC">
+$toc$
+</nav>
+$endif$
+$body$
+$if(date)$
+$if(versionNote)$
+<hr>
+<table>
+<tr valign="top" style="border: none;">
+<td style="padding-right:5px; border: none;">
+<a href="#top"><sup id="versionNote">*</sup></a>
+</td>
+<td style="border: none;">
+$versionNote$
+</td>
+</tr>
+</table>
+$endif$
+$endif$
+$for(include-after)$
+$include-after$
+$endfor$
+</div>
+</body>
+</html>

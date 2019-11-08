@@ -142,6 +142,14 @@ cfg_projects() {
     die 'Missing stdhostprojects; set it with `git config --global stdtools.stdhostprojects <path>`.'
 }
 
+cfg_toolsconfig() {
+    echo '.toolsconfig'
+}
+
+cfg_product() {
+    echo 'product'
+}
+
 cfg_releases() {
     echo 'releases'
 }
@@ -306,6 +314,53 @@ configUnsetLfsStandalone() {
 
 lsActiveSubmodulesRecursive() {
     git submodule foreach --recursive 'true' | cut -d "'" -f 2
+}
+
+# Like getVersion, but appends the detailed version info for tagged versions.
+getVersionHuman() {
+    local c tag
+    c=$(findVersioningCommit)
+    if gitStatusIsClean; then
+        if tag=$(git describe --exact-match ${c} 2>/dev/null); then
+            git show --abbrev=6 -s --pretty="${tag} (%cd-g%h)" --date=short ${c}
+        else
+            git show --abbrev=6 -s --pretty="%cd-g%h" --date=short ${c}
+        fi
+    else
+        git show --abbrev=6 -s --pretty="%cd-g%h-dirty-$(date +%s)" --date=short ${c}
+    fi
+}
+
+# Walk along the first parent to a commit that is either tagged or does touch
+# more than 'releases'.
+findVersioningCommit() {
+    local c parent
+    c=$(git rev-parse HEAD)
+    while parent=$(git rev-parse ${c}^) && isReleaseCommit ${c} &&
+        ! isTaggedCommit ${c}; do
+        c=${parent}
+    done
+    printf '%s' ${c}
+}
+
+isReleaseCommit() {
+    local c=$1
+    isNonMergeCommit $c &&
+    [ "$(git diff-tree ${c}^..${c} --name-only)" = "releases" ]
+}
+
+isNonMergeCommit() {
+    [ $(nParents $1) = 1 ]
+}
+
+# Mac OS X's wc pads with whitespace.  Use sed to strip it to avoid potential
+# confusion of the callers.
+nParents() {
+    git show -s --format=%P $1 | wc -w | sed -e 's/ *//g'
+}
+
+isTaggedCommit() {
+    git describe --exact-match >/dev/null 2>/dev/null $1
 }
 
 # `getRepoCommonName2()` tries to determine the full name of the repo in the
@@ -546,6 +601,31 @@ egrepEscapePath() {
     sed -e 's/\./[.]/g' <<< "$1"
 }
 
+# parseModelines <cmd> <cb>
+#
+# A modeline has format:
+#
+#     <space or beginning of line><cmd>:<option>...:<ignored>
+#
+# Several <option> can be separated by <space> or ':'.
+# <cb> <option>... is called for each modeline in stdin.
+parseModelines() {
+    local cmd="$1"
+    local cb="$2"
+    while IFS= read -r args; do
+        [ -n "${args}" ] || continue
+        ${cb} $args
+    done <<<"$(grepModelines ${cmd})"
+}
+
+grepModelines() {
+    local name="$1"
+    egrep "(^| )${name}:.*:" \
+    | sed -e "s/^.*${name}://" \
+    | sed -e 's/:[^:]*$//' \
+    | sed -e 's/:/ /g'
+}
+
 cfg_maintainerid() {
     git config tools.maintainerid \
     || ( detectMaintainerId ) \
@@ -685,6 +765,14 @@ isInsideWorkTree() {
 
 isTopLevelDir() {
     isInsideWorkTree && [ -z "$(git rev-parse --show-prefix 2>/dev/null)" ]
+}
+
+linkCount() {
+    ls -l -- "$1" | sed -e 's/  */ /' | cut -d ' ' -f 2
+}
+
+isHardLink() {
+    [ "$(linkCount "$1")" -gt 1 ]
 }
 
 opt_yes=

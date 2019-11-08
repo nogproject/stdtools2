@@ -1,0 +1,62 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+toolsdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)
+source "${toolsdir}/lib/lib.sh"
+
+product=$(cfg_product)
+
+usage() {
+    cat <<\EOF
+Usage:
+  cmd-copy [--list] <file>...
+
+Options:
+  --list    Print files that would be created instead of copying.
+
+Unpack tar files to the product directory.
+EOF
+}
+
+main() {
+    opt_list=
+    while [ $# -gt 0 ]; do
+        case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        --list)
+            opt_list=t
+            ;;
+        -*)
+            die "Unknown option $1"
+            ;;
+        *)
+            break
+            ;;
+        esac
+        shift
+    done
+
+    for f in "$@"; do
+        cmdUnpack "${f}"
+    done
+}
+
+cmdUnpack() {
+    local src="$1"
+    local destdir="${product}/$(dirname ${src})"
+
+    if test $opt_list; then
+        tar -tf "${src}" | sed -e "s|^|${destdir}/|"
+        return
+    fi
+
+    echo "    UNPACK ${src} into ${destdir}"
+    mkdir -p "${destdir}"
+    tar -C "${destdir}" -xf "${src}"
+}
+
+main "$@"

@@ -1,0 +1,471 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+toolsdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)
+source "${toolsdir}/lib/lib.sh"
+
+toolsconfig=$(cfg_toolsconfig)
+versionIncFile='version.inc.md'
+
+# Use https, since it can be used with with an http page url; but http script
+# links are incompatible with an https page url.
+mathjax_url="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"
+
+product=$(cfg_product)
+
+usage() {
+    cat <<\EOF
+Usage:
+  cmd-pandoc [--list] [-t|--to <type>] <file>...
+
+Options:
+  --list    Print files that would be created instead of running Pandoc.
+
+`stdtools cmd-pandoc` compiles Markdown files with Pandoc.
+
+Formulas will be rendered using MathJax.
+
+Internal `./x/y.md` links are converted to `./x/y.html`.  Internal links must
+start with a dot.  `./x.md#target` works.
+
+Some Pandoc options can be controlled by modelines in the input file.  Put a
+string with the following format somewhere in the markdown file (usually in an
+HTML comment at the end of the file):
+
+    pandoc:[no-]<OPTION>:...:
+
+The prefix 'no-' toggles the option off.  Multiple options can be separated by
+colon.  Supported options:
+
+    toc                 output table of content
+    number-sections     number section headers
+    version             output version information
+
+Pandoc uses `bootstrap` or `github` style, which can be configued in different
+scopes and with different importance:
+
+* git-config: Set the style via git-config, e.g. per repo using the `--local`
+  scope or per user using the `--global` scope:
+
+    git config (--local|--global) tools.pandocstyle <style>
+
+* toolsconfig: The style can be shared per stdrepo to ensure the same style for
+  all repo contributors.  This mode overwrites the git-config settings.
+
+    git config --file .toolsconfig build.pandoc.style <style>
+
+* shell variable: To temporarily overwrite the git-config and toolsconfig
+  settings, pass `PANDOCSTYLE=<style>` to the build command.
+
+The bootstrap style is the default if none of the three settings is available.
+EOF
+}
+
+main() {
+    arg_outtype=html
+    opt_list=
+    while [ $# -gt 0 ]; do
+        case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        --list)
+            opt_list=t
+            ;;
+        -t|--to)
+            shift
+            arg_outtype=$1
+            ;;
+        -*)
+            die "Unknown option $1"
+            ;;
+        *)
+            break
+            ;;
+        esac
+        shift
+    done
+
+    initPandocOpts
+
+    for f in "$@"; do
+        cmdPandoc "${f}"
+    done
+}
+
+cmdPandoc() {
+    local src="$1"
+    # Replace last .* with .$outtype.
+    local dest="${product}/${src%.*}.${arg_outtype}"
+    local version repo
+
+    if test $opt_list; then
+        printf '%s\n' "${dest}"
+        return
+    fi
+
+    echo "    PANDOC ${dest}"
+    mkdir -p "$(dirname "${dest}")"
+
+    # Set defaults and parse modeline options from source.
+    local lopt_toc=t
+    local lopt_number_sections=
+    local lopt_version=t
+    parseModelines pandoc parseModelinePandoc <"${src}"
+
+    local style="$(getPandocStyle)"
+    pandocArgs=(
+        --standalone
+        --mathjax="${mathjax_url}"
+        --template="${toolsdir}/lib/pandoc/template-${style}.html"
+    )
+    if [ -n "${opt_smart}" ]; then
+        pandocArgs+=( ${opt_smart} )
+    fi
+    if test ${lopt_toc}; then
+        pandocArgs+=( --toc )
+    fi
+    if test ${lopt_number_sections}; then
+        pandocArgs+=( --number-sections )
+    fi
+    if [ -n "${opt_bib}" ]; then
+        pandocArgs+=( ${opt_bib} )
+    fi
+    if  test ${lopt_version} ; then
+        pandocArgs+=(
+            --metadata date="Last modified $(getDate)"
+            --variable versionNote="$(getVersionNoteHtml)"
+        )
+        if hasStatusNote; then
+            if statusNoteHasClassAttribute; then
+                cmd="sed -i.bak '/^\`\`\`/d' ${versionIncFile} && rm ${versionIncFile}.bak"
+                msg="Ignoring class attributes in status note from \`${versionIncFile}\`.  Since 2019-02, you should not use code blocks anymore.  To remove them, run: ${cmd}"
+                warn "${msg}"
+            fi
+            pandocArgs+=(
+                --variable statusNote="$(getStatusNoteHtml)"
+            )
+            case ${style} in
+            bootstrap)
+                case $(getStatus) in
+                StRetired)
+                    pandocArgs+=(
+                        --variable statusClass="alert alert-danger"
+                        --variable statusTitle="RETIRED"
+                    )
+                    ;;
+                StFrozen)
+                    pandocArgs+=(
+                        --variable statusClass="alert alert-warning"
+                        --variable statusTitle="FROZEN"
+                    )
+                    ;;
+                StDeprecated)
+                    pandocArgs+=(
+                        --variable statusClass="alert alert-info"
+                        --variable statusTitle="DEPRECATED"
+                    )
+                    ;;
+                StUnspecified)
+                    pandocArgs+=(
+                        --variable statusClass="alert alert-info"
+                        --variable statusTitle="Repo Status"
+                    )
+                    ;;
+                esac
+                ;;
+            github)
+                case $(getStatus) in
+                StRetired)
+                    pandocArgs+=(
+                        --variable statusClass="status-danger"
+                        --variable statusTitle="RETIRED"
+                    )
+                    ;;
+                StFrozen)
+                    pandocArgs+=(
+                        --variable statusClass="status-warning"
+                        --variable statusTitle="FROZEN"
+                    )
+                    ;;
+                StDeprecated)
+                    pandocArgs+=(
+                        --variable statusClass="status-info"
+                        --variable statusTitle="DEPRECATED"
+                    )
+                    ;;
+                StUnspecified)
+                    pandocArgs+=(
+                        --variable statusClass="status-info"
+                        --variable statusTitle="Repo Status"
+                    )
+                    ;;
+                esac
+                ;;
+            esac
+        fi
+    fi
+
+    local titleStyle
+    titleStyle=$(detectMarkdownTitleStyle "${src}")
+
+    # Pandoc 2.x prints a warning if the title block is missing.  Use the
+    # basename instead to suppress the warning.
+    case ${titleStyle} in
+    TitleUnknown)
+        pandocArgs+=( --metadata title="$(basename "${src}" '.md')" )
+        ;;
+    esac
+
+    # Remove @@VERSIONINC@@, because it is no longer replaced by the content of
+    # `version.inc.md`.
+    #
+    # Convert the first three lines to a Pandoc `%` title block:
+    #
+    # For TitleH1, the convention is:
+    #
+    # line 1: # <title>
+    # line 2: By <authors>.
+    # line 3: Last modified <date>.
+    #
+    #  - The full stops in line 2 and 3 are optional.
+    #  - The byline may start lowercase or uppercase.
+    #
+    # For TitlePandoc, the Markdown must already have the correct format.
+    #
+    # For TitleUnknown, there is no obvious way how to process it.
+    cat "${src}" \
+    | sed -E -e '/^(<!-- *)?@@VERSIONINC@@( *-->)?/ d' \
+    | case ${titleStyle} in
+    TitleH1)
+        sed -E \
+            -e '1 s/^# /% /' \
+            -e '2 s/^[Bb]y (.*[^.])\.?$/% \1/' \
+            -e '3 s/^(Last modified .*[^.])\.?$/% \1/' \
+        ;;
+    TitlePandoc | TitleUnknown)
+        cat
+        ;;
+    esac \
+    | pandoc "${pandocArgs[@]}" \
+    | sed \
+        -e 's/<table>/<table class="table">/g' \
+        -e 's/<th align="/<th class="text-/g' \
+        -e 's/<td align="/<td class="text-/g' \
+        -e 's|href="[.]/\([^"]*\)[.]md"|href="\1.html"|g' \
+        -e 's|href="[.]/\([^"]*\)[.]md#|href="\1.html#|g' \
+        >"${dest}"
+}
+
+getStatus() {
+    if grep -q '^THIS.*RETIRED' "${versionIncFile}"; then
+        echo StRetired
+    elif grep -q '^THIS.*FROZEN' "${versionIncFile}"; then
+        echo StFrozen
+    elif grep -q '^THIS.*DEPRECATED' "${versionIncFile}"; then
+        echo StDeprecated
+    else
+        echo StUnspecified
+    fi
+}
+
+# `getStatusNote()` assumes the following file format:
+#
+# ```
+# <title>
+# <empty-line>
+# <version-footnote>
+# <empty-line>
+# <status-note>
+# ```
+#
+getStatusNote() {
+    if [ -e "${versionIncFile}" ]; then
+        sed -e '1,/^ *$/ d' \
+            -e '/^\[^version\]:/,/^ *$/ d' \
+            "${versionIncFile}"
+    fi
+}
+
+hasStatusNote() {
+    [ -n "$(getStatusNote | sed -e '/^ *$/ d')" ]
+}
+
+getStatusNoteHtml() {
+    getStatusNote \
+    | sed -e 's/^```{.*}/```/' \
+    | pandoc -f markdown -t html
+}
+
+statusNoteHasClassAttribute() {
+    getStatusNote | grep -q '^```{.*}'
+}
+
+# `getRepoGenerations()` prints the version footnote without its first line.
+getRepoGenerations() {
+    if [ -e "${versionIncFile}" ]; then
+        sed -n -e '/^\[^version\]:/,/^ *$/ p' "${versionIncFile}" \
+        | sed -e '1 d'
+    fi
+}
+
+getDate() {
+    # Use the latest commit that modified the file for the date.
+    cd "$(dirname "${src}")" &&
+        git log -n 1 --pretty=%cd --date=short -- "$(basename "${src}")"
+}
+
+getVersionNoteHtml() {
+    # Use the latest commit of the repo for the version.
+    version=$(getVersionHuman)
+    repo=$(getRepoNameForVersion)
+    generations=$(getRepoGenerations)
+
+    pandoc -f markdown -t html \
+    <<< "Build ${version} of repo \`${repo}\`.  ${generations}"
+}
+
+# `getRepoNameForVersion()` prints the stdrepo or the substdrepo name.  If the
+# remote has an unknown URL, it prints a stripped version of the remote URL.
+getRepoNameForVersion() {
+    local name url
+    name=$(getRepoCommonName2)
+    case ${name} in
+    unknown)
+        if ! url="$(git config remote.origin.url)"; then
+            printf 'unknown'
+            return
+        fi
+        # Strip URL `<scheme>://`, strip `<user>@`, strip `.git`, and squeeze
+        # double slashes.
+        name="${url#*://}"
+        name="${name#*@}"
+        name="${name%.git}"
+        name="$(tr <<<"${name}" -s '/')"
+        printf '%s' "${name}"
+        return
+        ;;
+    *)
+        printf '%s' "${name}"
+        return
+        ;;
+    esac
+}
+
+getPandocStyle() {
+    style="${PANDOCSTYLE:-}"
+    if [ -n "${style}" ]; then
+        if $(isValidPandocStyle "${style}"); then
+            echo "${style}"
+            return
+        fi
+        warn "Ignoring invalid 'PANDOCSTYLE=${style}'."
+    fi
+
+    style="$(
+        git config --file "${toolsconfig}" build.pandoc.style || true
+    )"
+    if [ -n "${style}" ]; then
+        if $(isValidPandocStyle "${style}"); then
+            echo "${style}"
+            return
+        fi
+        warn "Ignoring invalid '${toolsconfig}' 'build.pandoc.style=${style}'."
+    fi
+
+    style="$(git config tools.pandocstyle || true)"
+    if [ -n "${style}" ]; then
+        if $(isValidPandocStyle "${style}"); then
+            echo "${style}"
+            return
+        fi
+        warn "Ignoring invalid Git config 'tools.pandocstyle=${style}'."
+    fi
+
+    echo 'bootstrap'
+}
+
+isValidPandocStyle() {
+    [[ "$1" =~ ^(github|bootstrap)$ ]]
+}
+
+detectMarkdownTitleStyle() {
+    case "$(head -c 2 "$1")" in
+    '% ')
+        echo TitlePandoc
+        ;;
+    '# ')
+        echo TitleH1
+        ;;
+    *)
+        echo TitleUnknown
+        ;;
+    esac
+}
+
+parseModelinePandoc() {
+    while [ $# -gt 0 ]; do
+        case "$1" in
+        toc)
+            lopt_toc=t
+            ;;
+        no-toc)
+            lopt_toc=
+            ;;
+        number-sections)
+            lopt_number_sections=t
+            ;;
+        no-number-sections)
+            lopt_number_sections=
+            ;;
+        version)
+            lopt_version=t
+            ;;
+        no-version)
+            lopt_version=
+            ;;
+        *)
+            die "Unknown modeline option '$1'."
+            ;;
+        esac
+        printf "      modeline '%s'.\n" "$1"
+        shift
+    done
+}
+
+initPandocOpts() {
+    detectPandoc
+
+    # If bib available, setup pandoc option.
+    opt_bib=
+    if [ -e references.bib ]; then
+        opt_bib="--bibliography=references.bib"
+    fi
+}
+
+# With 1.5, the 3rd title line 'Version...' didn't work.  It works with 1.9.
+# Pandoc 2.0 requires `-f markdown+smart` instead of `--smart`.
+detectPandoc() {
+    local version major minor
+    version=$(pandoc --version | grep '^pandoc[.a-zA-Z]* [1-9][0-9]*.[0-9][0-9]*.') ||
+        die "Failed to determine pandoc version."
+    IFS=. read -r major minor _ <<< "$(cut -d ' ' -f 2 <<< "${version}")"
+    case ${major} in
+    1)
+        opt_smart='--smart'
+        if [ ${minor} -lt 9 ]; then
+            die 'Pandoc minor version too low, expected >= 1.9.'
+        fi
+        ;;
+    2)
+        opt_smart='-f markdown+smart'
+        ;;
+    *)
+        die 'Unsupported Pandoc version.  Expected 1.9 <= version < 3.0.'
+        ;;
+    esac
+}
+
+main "$@"
