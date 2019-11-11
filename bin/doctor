@@ -105,8 +105,7 @@ doctorLfsStandalone() {
     if ! git lfs-x --version >/dev/null; then
         echo 'Failed to run `git lfs-x --version`.
 
-Do you have a symlink to `vissys_stdtools_'${stdtoolsYear}'/zibtools/bin/git-lfs-x` in
-`~/bin`?
+Do you have a symlink to `git-lfs-x/bin/git-lfs-x` in `~/bin`?
 '
         err=t
     fi
