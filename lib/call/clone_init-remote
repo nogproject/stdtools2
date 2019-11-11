@@ -1,0 +1,119 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+main() {
+    local cfg_initials="$1"
+    local fullname="$2"
+    local shortname="$3"
+    local superdir="$4"
+    local subdir="$5"
+
+    if [ -e "${superdir}/${subdir}/.git" ]; then
+        echo 'Remote repository already exists.'
+        exitok
+    fi
+
+    if ! [ -e "${superdir}/.gitmodules" ]; then
+        die "Error: Missing '${superdir}/.gitmodules' (expected git repo with submodules at '${superdir}').
+    If '${superdir}' is a yearly folder, see 'stdtools init-year -h' for how to create it.
+    If '${superdir}' is a project folder, see 'stdtools init-project -h' for how to initialize it.
+    "
+    fi
+
+    # Use shared permissions if dir has setgid.
+    opt_shared=
+    if [ -g "${superdir}" ]; then
+        echo "Using shared permissions."
+        opt_shared=--shared
+    fi
+
+    cd "${superdir}"
+    (
+        stdlock 10
+
+        mkdir "${subdir}"
+        cd "${subdir}"
+        initSubmodule
+
+        cd "${superdir}"
+        if test ${opt_shared}; then
+            umask 0007
+        fi
+        git submodule add "./${subdir}"
+        git commit -m "Add submodule '${subdir}'"
+    ) 10<"$(stdlockdir)"
+
+    echo 'Initialized remote repository.'
+
+    exitok
+}
+
+initSubmodule() {
+    git init ${opt_shared}
+    git config receive.denyNonFastForwards false
+
+    if test ${opt_lfs}; then
+        git lfs-x init
+    fi
+
+    touch .gitignore
+    echo '.DS_Store' >>.gitignore
+    echo '/product/' >>.gitignore
+    echo '~$*' >>.gitignore
+    git add .gitignore
+    git commit -m 'Initial commit'
+
+    local spacedShortname=$(tr '-' ' ' <<<"${shortname}")
+    cat >README.md <<EOF
+# ${spacedShortname} -- README
+By ${cfg_initials}
+<!--@@VERSIONINC@@-->
+
+## Introduction
+
+Stdrepo \`${fullname}\` contains information that need to be described.
+
+## Data management plan
+
+See [DATAPLAN](./DATAPLAN.md).
+EOF
+
+    cat >DATAPLAN.md <<EOF
+# ${spacedShortname} -- Data Management Plan
+By ${cfg_initials}
+<!--@@VERSIONINC@@-->
+
+See main [README](./README.md).
+
+## Strategy
+
+The strategy will be added during the first yearly review.
+
+## $(date +%F) Initialized repo (stdtools clone)
+EOF
+
+    cat >LOG.md <<EOF
+# ${spacedShortname} -- LOG
+By ${cfg_initials}
+<!--@@VERSIONINC@@-->
+
+## $(date +%F) Initialized repo (stdtools clone)
+EOF
+
+    # Use TitlePandoc `%`, because `version.inc.md` is only used if Markdown is
+    # pre-processed before passing it to Pandoc.
+    cat >version.inc.md <<EOF
+% @@DATE@@[^version]
+
+[^version]: @@VERSION@@ of repo \`@@REPO@@\`.
+Next generations: none.
+Previous generations: none.
+EOF
+
+    git add -- README.md DATAPLAN.md LOG.md version.inc.md
+    git commit -m 'Add README, LOG, and version info'
+}
+
+
+main "$@"

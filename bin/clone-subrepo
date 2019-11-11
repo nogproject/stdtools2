@@ -1,0 +1,102 @@
+#!/bin/bash
+# vim: sw=4
+set -o nounset -o errexit -o pipefail -o noglob
+
+toolsdir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+source "${toolsdir}/lib/lib.sh"
+
+hooksdir="${toolsdir}/lib/hooks"
+
+usage() {
+    name="$(basename "$0")"
+    cat <<\EOFTXT
+Usage:
+  clone-subrepo <path>
+
+Options:
+  <path>      Relative path to the subrepo.
+
+`stdtools clone-subrepo` initializes the submodule at <path> and performs a few
+additional initialization steps, like LFS and hooks.
+EOFTXT
+}
+
+main() {
+    readConfig
+    argparse "$@"
+    activateToolsEnvChecked
+
+    echo "    CLONE"
+    git submodule update --init "${arg_path}"
+
+    cd "${arg_path}"
+    initLfsSsh
+    copyHooks
+    createLocalBranch
+}
+
+argparse() {
+    while [ $# -ge 1 ]
+    do
+        case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -*)
+            die "Unknown option $1"
+            ;;
+        *)
+            break
+            ;;
+        esac
+    done
+    case $# in
+    1)
+        arg_path="$1"
+        ;;
+    *)
+        die "Wrong number of arguments."
+        ;;
+    esac
+    return 0
+}
+
+readConfig() {
+    cfg_initials=$(git config user.initials) ||
+        die "Failed to read user.initials (please set using 'git config --global user.initials')."
+}
+
+copyHooks() {
+    echo "    CP hooks"
+    gitdir="$(git rev-parse --git-dir)"
+    mkdir -p "${gitdir}/hooks"
+    for h in pre-commit; do
+        echo "    ... ${h}"
+        cp "${hooksdir}/${h}" "${gitdir}/hooks/${h}"
+    done
+}
+
+initLfsSsh() {
+    if isConfiguredLfsSsh; then
+        echo "    INIT lfs ssh transfer"
+        setLfsSshConfig
+    else
+        echo "    SKIP lfs ssh init (gitattributes indicate no lfs)"
+    fi
+}
+
+createLocalBranch() {
+    if masterExists; then
+        echo "    BRANCH ${cfg_initials}/master exists"
+    else
+        echo "    BRANCH ${cfg_initials}/master"
+        git checkout -b ${cfg_initials}/master
+    fi
+}
+
+masterExists() {
+    git rev-parse -q --verify >/dev/null "refs/heads/${cfg_initials}/master"
+}
+
+main "$@"

@@ -1,0 +1,12 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+dotgit="$1"
+
+if ! [ -e "${dotgit}" ]; then
+    echo >&2 "Missing '$dotgit'."
+    exit ${cfg_exit_err}
+fi
+
+exit ${cfg_exit_ok}

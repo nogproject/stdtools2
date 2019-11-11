@@ -1,0 +1,768 @@
+#!/bin/bash
+# vim: sw=4
+set -o nounset -o errexit -o pipefail -o noglob
+
+toolsdir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+source "${toolsdir}/lib/lib.sh"
+
+hooksdir="${toolsdir}/lib/hooks"
+
+# Extensions that should be stored in LFS: simple files and directories and
+# all files below like Keynote documents.
+cfg_lfs_file_extensions='
+    AVI
+    TIF
+    am
+    avi
+    bin
+    csv
+    dat
+    doc
+    docx
+    eps
+    gif
+    icol
+    jpeg
+    jpg
+    key
+    m4v
+    mod
+    mov
+    mp4
+    mpg
+    npy
+    odg
+    oo3
+    pdf
+    png
+    ppt
+    pptm
+    pptx
+    raw
+    rec
+    surf
+    tar
+    tar.bz2
+    tar.gz
+    tar.xz
+    tif
+    tiff
+    xls
+    xlsx
+    zip
+'
+cfg_lfs_dir_extensions='
+    key
+    oo3
+    sparsebundle
+'
+
+usage() {
+    cat <<\EOFTXT
+Usage:
+  clone [options] [--subrepos] [--create] [--maintainerid <uid>]
+        [--year|--timeless] [--lfs|--no-lfs]
+        [--subrepo <stdrepo>/<subrepo> <subrepo-branch> <branch-alias> | <stdrepo>]
+
+Options:
+    --create    Create remote repository if it doesn't exist.
+    --npdlink|--no-npdlink  [default: yes if tools.npdlink=true; no otherwise]
+                If enabled, `clone` will create a symlink
+                `<SHORTNAME>_<PROJECT>_<DATE>` to the fully qualified repo name
+                when cloning a repo for the first time.  Such a link is useful
+                during file name completion, since it puts the more distinctive
+                name first and the less distinctive date last.  The symlink
+                will only be created on Linux and Mac and only if the parent
+                directory uses submodules.
+    --pndlink|--no-pndlink  [default: yes if tools.pndlink=true; no otherwise]
+                If enabled, create `<PROJECT>_<SHORTNAME>_<DATE>` symlinks.
+    --maintainerid <uid>  [default: git config stdtools.defaultMaintainer]
+                Use `<uid>` when connecting via ssh to create remote
+                repository.
+    --year      Allow year-only `<DATE>` during create.  The default is to
+                require a month, since this is what we usually want.
+    --timeless  Allow timeless `<PROJECT>_<SHORTNAME>` during creates.
+    --force     Skip safety checks.
+    --lfs|--no-lfs  [default: no, --create sets it to yes]
+                Configure Git LFS for some file types and initialize the remote
+                Git LFS storage.  This is the new default since Aug 2017.
+                The remote Git LFS storage can later be initialized with
+                `stdtools init-lfs`.
+    --toolsconfig|--no-toolsconfig  [default: no, --create sets it to yes]
+                Control whether the default `.toolsconfig` is automatically
+                added.
+    --subrepos|--no-subrepos  [default: yes]
+                If enabled, also run `clone-subrepos`.
+    --subrepo <stdrepo>/<subrepo> <subrepo-branch> <branch-alias>
+                instead of cloning the repo itself, clone branch
+                `<subrepo-branch>` of the subrepo to
+                `<stdrepo>__<subrepo>__<branch-alias>`.
+
+`stdtools clone` clones a repo from the standard location on SSH host
+`<stdtools.stdhost>` in directory `<stdtools.stdhostprojects>` to the current
+directory.
+
+The format of `<stdrepo>` is `<PROJECT>_<SHORTNAME>_<DATE>` where
+`<DATE>=<YEAR>[-<MONTH>]`, for example `foo-data_2019-04`, or
+`<PROJECT>_<SHORTNAME>` for `--timeless` repos.  See below for older formats.
+If no name is provided, some setup operations will be performed on the stdrepo
+in the current directory, such as installing Git hooks and cloning subrepos.
+
+`stdtools clone` can be safely run if the repo has been cloned before to apply
+additional operations, such as adding the stdtools.
+
+Repos are mapped to project directories with the following naming convention,
+except for some special project names, which are mapped differently (see list
+below).
+
+The naming convention since 2016 is:
+
+    <PROJECT>_<SHORTNAME>_<YEAR>[-<MONTH>]
+    <stdtools.stdhostprojects>/<PROJECT>/<YEAR>/<SHORTNAME>  # if no <MONTH>.
+    <stdtools.stdhostprojects>/<PROJECT>/<YEAR>/<SHORTNAME>_<MONTH>
+
+Timeless repos are supported since 2017:
+
+    <PROJECT>_<SHORTNAME>
+    <stdtools.stdhostprojects>/<PROJECT>/<SHORTNAME>
+
+The naming convention in 2014 and 2015 was:
+
+    <YEAR>[-<MONTH>]_<PROJECT>_<SHORTNAME>
+    <stdtools.stdhostprojects>/<PROJECT>/<YEAR>/<SHORTNAME>  # if no <MONTH>.
+    <stdtools.stdhostprojects>/<PROJECT>/<YEAR>/<MONTH>_<SHORTNAME>
+
+The naming convention in 2013 was:
+
+    <YEAR>[-<MONTH>]_<PROJECT>_<SHORTNAME>
+    <stdtools.stdhostprojects>/<PROJECT>/<YEAR>/<DATE>_<SHORTNAME>
+
+If the current working directory is a Git repository that has submodules, `git
+submodule` will be used.  Otherwise `git clone` will be used.
+
+The remote repository is expected to exist unless `--create` is used.
+`--create` tells `clone` to create a remote repository if needed.  In order to
+create a repo, the remote `<PROJECT>/<YEAR>` folder must exist and contain a
+Git repo with submodules; use `stdtools init-year` to create a yearly folder.
+The new repo will be added as a submodule.  Shared permissions will be used if
+the `<YEAR>` directory has its setgid bit set.
+
+This version of `clone` supports cloning 2013 to 2019 repos.  Creating new
+repos, however, is limited to 2019.
+
+Unless `--force` is used, the current working directory must match `<YEAR>`,
+since it is recommended to organize local repositories by year.
+
+# Non-standard project paths
+
+The following non-standard project paths (<PROJECT>:<PATH>) are used:
+
+EOFTXT
+
+    git config --get-regexp '^stdtools[.]projectsPath[.][a-z0-9]*$' \
+    | cut -d . -f 3- \
+    | indentByFour
+
+cat <<\EOFTXT
+
+# How to create a remote `<YEAR>` repo?
+
+The repo must have shared permissions and contain a file `.gitmodules`.  The
+`<YEAR>` directory itself must have the setgid bit set.  Use the following
+command to create a project subdirectory for 2019:
+
+    stdtools init-year <project>
+
+# How to migrate a repo from Git Silo to Git LFS?
+
+New repos can be created with `--lfs`, which is the default since Aug 2017.
+
+To migrate existing repos, change to the working copy and follow the
+instructions from `userdoc-lfs.md`.  Briefly:
+
+    cd <working-copy>
+    git lfs-x migrate
+    stdtools init-lfs
+    stdtools pull
+    git lfs-x push --head-all origin  # Skip unless you added a silo file.
+    stdtools publish-to-master
+
+EOFTXT
+}
+
+main() {
+    readConfig
+    argparse "$@"
+    activateToolsEnvChecked
+
+    if [ -n "${arg_subrepo}" ]; then
+        validateRepoName "${arg_name}"
+        read shortname project date _ <<<"$(parseRepoName ${arg_name})"
+        if [ -n "${date}" ] && ! test ${opt_force}; then
+            validateWorkingDir "${date}"
+        fi
+        if test ${opt_create}; then
+            validateCreateDate "${date}"
+        fi
+
+        validateBranchAlias "${arg_branch_alias}"
+
+        dest="${arg_name}__$(flatName "${arg_subrepo}")__${arg_branch_alias}"
+        echo "    CLONE ..."
+        cloneSubrepo "${date}" "${project}" "${shortname}" "${dest}"
+        echo "    CLONE OK"
+
+        # From here on inside the cloned working copy.
+        cd "${dest}"
+    elif [ -n "${arg_name}" ]; then
+        validateRepoName "${arg_name}"
+        read shortname project date _ <<<"$(parseRepoName ${arg_name})"
+        if [ -n "${date}" ] && ! test ${opt_force}; then
+            validateWorkingDir "${date}"
+        fi
+        if test ${opt_create}; then
+            validateCreateDate "${date}"
+        fi
+
+        echo "    INIT ..."
+        initRemote "${arg_name}" "${date}" ${project} ${shortname}
+        echo "    INIT OK"
+
+        echo "    CLONE ..."
+        clone "${date}" ${project} ${shortname}
+        echo "    CLONE OK"
+
+        # From here on inside the cloned working copy.
+        cd "${arg_name}"
+    else
+        isValidRepoFullname "$(getRepoCommonName)" ||
+            die "Not inside a std repo."
+        haveChanges &&
+            die "Uncommited changes; commit everything before self clone."
+        haveUntrackedFiles &&
+            die "Untracked files; commit everything before self clone."
+    fi
+
+    echo "    CP hooks..."
+    copyHooks
+    echo "    CP hooks OK"
+
+    if test ${opt_lfs}; then
+        echo "    CONFIG lfs..."
+        configLfs
+        echo "    CONFIG lfs OK"
+    else
+        echo "    SKIP config lfs"
+    fi
+    initLfsSsh
+
+    if test ${opt_toolsconfig}; then
+        echo "    ADD .toolsconfig..."
+        initToolsConfig
+        echo "    ADD .toolsconfig OK"
+    else
+        echo "    SKIP add .toolsconfig"
+    fi
+
+    if test ${opt_subrepos}; then
+        echo "    CLONE subrepos"
+        cloneSubrepos
+    else
+        echo "    SKIP clone-subrepos"
+    fi
+
+    if hasSyncTarget; then
+        cat <<\EOF
+
+Repo has a sync target.  Prefer `stdtools sync in <sync-target>` over
+`git-lfs-x fetch` in order to avoid transferring data twice.
+
+EOF
+    fi
+}
+
+readConfig() {
+    cfg_initials=$(git config user.initials) ||
+        die "Failed to read user.initials (please set using 'git config --global user.initials')."
+}
+
+argparse() {
+    arg_name=
+    opt_force=
+    opt_year=
+    opt_timeless=
+    opt_create=
+    opt_lfs=
+    opt_toolsconfig=
+    arg_maintainerid="$(cfg_defaultmaintainerid)"
+    opt_npdlink=
+    [ "$(git config tools.npdlink)" = 'true' ] && opt_npdlink=t
+    opt_pndlink=
+    [ "$(git config tools.pndlink)" = 'true' ] && opt_pndlink=t
+    opt_subrepos=t
+    arg_subrepo=
+    arg_subrepo_branch=
+    arg_branch_alias=
+    while [ $# -ge 1 ]
+    do
+        case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -f|--force)
+            opt_force=t
+            shift
+            ;;
+        --year)
+            opt_year=t
+            shift
+            ;;
+        --timeless)
+            opt_timeless=t
+            shift
+            ;;
+        --create)
+            opt_create=t
+            opt_lfs=t
+            opt_toolsconfig=t
+            shift
+            ;;
+        --maintainerid)
+            shift
+            [ $# -ge 1 ] || die "--maintainerid requires argument."
+            arg_maintainerid="$1"
+            shift
+            ;;
+        --lfs)
+            opt_lfs=t
+            shift
+            ;;
+        --no-lfs)
+            opt_lfs=
+            shift
+            ;;
+        --toolsconfig)
+            opt_toolsconfig=t
+            shift
+            ;;
+        --no-toolsconfig)
+            opt_toolsconfig=
+            shift
+            ;;
+        --npdlink)
+            opt_npdlink=t
+            shift
+            ;;
+        --no-npdlink)
+            opt_npdlink=
+            shift
+            ;;
+        --pndlink)
+            opt_pndlink=t
+            shift
+            ;;
+        --no-pndlink)
+            opt_pndlink=
+            shift
+            ;;
+        --subrepos)
+            opt_subrepos=t
+            shift
+            ;;
+        --no-subrepos)
+            opt_subrepos=
+            shift
+            ;;
+        --subrepo)
+            if [ $# -ne 4 ]; then
+                die '--subrepo requires three additional arguments.'
+            fi
+            IFS=/ read -r arg_name arg_subrepo <<<"$2"
+            if [ -z "${arg_subrepo}" ]; then
+                die 'Missing <subrepo> in <stdrepo>/<subrepo>.'
+            fi
+            arg_subrepo_branch="$3"
+            arg_branch_alias="$4"
+            shift 4
+            ;;
+        -*)
+            die "Unknown option $1"
+            ;;
+        *)
+            break
+            ;;
+        esac
+    done
+    case $# in
+    0)
+        ;;
+    1)
+        if [ -n "${arg_name}" ]; then
+            die 'Too many arguments.'
+        fi
+        arg_name="$1"
+        ;;
+    *)
+        die "Wrong number of arguments."
+        ;;
+    esac
+
+    return 0
+}
+
+clone() {
+    local date="$1"
+    local project="$2"
+    local shortname="$3"
+    local year=$(cut -d - -f 1 <<<"${date}")
+    opt_submodule=
+    if [ "$(git rev-parse --is-inside-work-tree 2>/dev/null)" = "true" ] &&
+        [ -f "$(git rev-parse --show-toplevel)/.gitmodules" ]; then
+        opt_submodule=t
+    fi
+
+    if [ -e ${arg_name} ]; then
+        echo "    Directory '${arg_name}' already exists, skipping clone."
+        return 0
+    fi
+
+    url="ssh://$(cfg_stdhost)/$(stdhostSuperdir ${project} "${date}")/$(stdhostSubdir ${shortname} "${date}")"
+    if test ${opt_submodule}; then
+        echo "    using git submodule..."
+
+        git submodule add --force "${url}" ${arg_name}
+        if test ${opt_npdlink}; then
+            case "$(uname)" in
+            Darwin*|Linux*)
+                read -r n p d _ <<<"$(parseRepoName ${arg_name})"
+                if [ -n "${d}" ]; then
+                    local npd="${n}_${p}_${d}"
+                    if [ -L "${npd}" ]; then
+                        echo "    npdlink already exists..."
+                    else
+                        echo "    creating npdlink..."
+                        ln -s "${arg_name}" "${npd}"
+                        git add -- "${npd}"
+                    fi
+                else
+                    np="${n}_${p}"
+                    if [ -L "${np}" ]; then
+                        echo "    nplink already exists..."
+                    else
+                        echo "    creating nplink..."
+                        ln -s "${arg_name}" "${np}"
+                        git add -- "${np}"
+                    fi
+                fi
+                ;;
+            esac
+        fi
+        if test ${opt_pndlink} && [ -n "${date}" ] && [ "${year}" -lt 2016 ];
+        then
+            case "$(uname)" in
+            Darwin*|Linux*)
+                read -r n p d _ <<<"$(parseRepoName ${arg_name})"
+                local pnd="${p}_${n}_${d}"
+                if [ -L "${pnd}" ]; then
+                    echo "    pndlink already exists..."
+                else
+                    echo "    creating pndlink..."
+                    ln -s "${arg_name}" "${pnd}"
+                    git add -- "${pnd}"
+                fi
+                ;;
+            esac
+        fi
+        git commit -m "Add ${arg_name}"
+
+        cd ${arg_name}
+        git fetch  # To be sure that remote is updated during re-clone.
+        if isValidRef "refs/heads/${cfg_initials}/master"; then
+            git checkout "${cfg_initials}/master"
+            git reset --hard origin/master
+            echo "    Reset existing '${cfg_initials}/master' to 'origin/master'."
+            echo
+            echo 'WARNING: This seems to be a re-clone.  Check later that the branches are as you expect.'
+            echo 'ENTER to continue.'
+            read
+        else
+            echo "    Creating local branch '${cfg_initials}/master'."
+            git checkout -b ${cfg_initials}/master origin/master
+        fi
+        # Delete master branch, so that there is only a single branch.
+        if isValidRef refs/heads/master; then
+            git branch -D master
+        fi
+    else
+        echo "    using git clone..."
+
+        git clone "${url}" ${arg_name}
+        echo "    Switching local branch to '${cfg_initials}/master'."
+        cd ${arg_name}
+        git branch -m ${cfg_initials}/master
+    fi
+
+    if ! isValidRef refs/remotes/origin/${cfg_initials}/master; then
+        echo "    Pushing '${cfg_initials}/master'."
+        git push origin ${cfg_initials}/master ||
+            echo "
+Warning: failed to create ${cfg_initials}/master at remote.  You may ignore
+this warning if you know that the remote is read-only and you are not allowed
+to create a branch there.
+"
+    fi
+
+    cd ..
+}
+
+cloneSubrepo() {
+    local date="$1"
+    local project="$2"
+    local shortname="$3"
+    local dest="$4"
+    local year=$(cut -d - -f 1 <<<"${date}")
+    opt_submodule=
+    if [ "$(git rev-parse --is-inside-work-tree 2>/dev/null)" = "true" ] &&
+        [ -f "$(git rev-parse --show-toplevel)/.gitmodules" ]; then
+        opt_submodule=t
+    fi
+
+    if [ -e ${dest} ]; then
+        echo "    Directory '${dest}' already exists, skipping clone."
+        return 0
+    fi
+
+    url="ssh://$(cfg_stdhost)/$(stdhostSuperdir ${project} "${date}")/$(stdhostSubdir ${shortname} "${date}")/${arg_subrepo}"
+    if test ${opt_submodule}; then
+        echo "    using git submodule..."
+
+        git submodule add --force "${url}" ${dest}
+        git commit -m "Add ${dest}"
+
+        pushd "${dest}" >/dev/null
+        git fetch  # To be sure that remote is updated during re-clone.
+        if isValidRef "refs/heads/${arg_subrepo_branch}"; then
+            git checkout "${arg_subrepo_branch}"
+            git reset --hard "origin/${arg_subrepo_branch}"
+            echo "    Reset existing '${arg_subrepo_branch}' to 'origin/${arg_subrepo_branch}'."
+            echo
+            echo 'WARNING: This seems to be a re-clone.  Check later that the branches are as you expect.'
+            echo 'ENTER to continue.'
+            read
+        else
+            echo "    Creating local branch '${arg_subrepo_branch}'."
+            git checkout -b "${arg_subrepo_branch}" "origin/${arg_subrepo_branch}"
+        fi
+        # Delete master branch, so that there is only a single branch.
+        if isValidRef refs/heads/master; then
+            git branch -D master
+        fi
+        popd >/dev/null
+    else
+        echo "    using git clone..."
+        git clone "${url}" -b "${arg_subrepo_branch}" ${dest}
+    fi
+}
+
+copyHooks() {
+    gitdir="$(git rev-parse --git-dir)"
+    mkdir -p "${gitdir}/hooks"
+    for h in pre-commit; do
+        echo "    ... ${h}"
+        cp "${hooksdir}/${h}" "${gitdir}/hooks/${h}"
+    done
+}
+
+configLfs() {
+    if gitattributesHasCustomEntries; then
+        die "Refusing to automatically add LFS attributes, because '.gitattributes' contains custom filter=silo or filter=lfs entries."
+    fi
+
+    if haveChanges; then
+        die "Refusing to configure LFS in '${arg_name}', because there are uncommitted changes."
+    fi
+
+    touch .gitattributes
+    new_attributes=$(
+        (cat .gitattributes && defaultLfsAttibutes) | sort -u
+    )
+    printf '%s\n' "${new_attributes}" >.gitattributes
+
+    git add .gitattributes
+    # Ignore exit code, since fail may indicate no changes.
+    git commit -m 'Set default file types Git LFS attributes' || true
+}
+
+initLfsSsh() {
+    if isConfiguredLfsSsh; then
+        echo "    INIT lfs ssh transfer"
+        setLfsSshConfig
+    else
+        echo "    SKIP lfs ssh init (gitattributes indicate no lfs)"
+    fi
+}
+
+gitattributesHasCustomEntries() {
+    [ -f .gitattributes ] &&
+        grep -q -v -e 'filter=silo' -e 'filter=lfs' .gitattributes
+}
+
+defaultLfsAttibutes() {
+    for ext in ${cfg_lfs_file_extensions}; do
+        printf '*.%s filter=lfs diff=lfs merge=lfs -text\n' ${ext}
+    done
+    for ext in ${cfg_lfs_dir_extensions}; do
+        printf '**/*.%s/** filter=lfs diff=lfs merge=lfs -text\n' ${ext}
+    done
+}
+
+initToolsConfig() {
+    if [ -e .toolsconfig ]; then
+        echo "    ... keeping existing .toolsconfig."
+    elif haveChanges; then
+        die "Refusing to init .toolsconfig in '${arg_name}', because there are uncommitted changes."
+    else
+        "${toolsdir}/bin/init-toolsconfig"
+        git add -- .toolsconfig
+        git commit -m "Add default toolsconfig"
+    fi
+}
+
+cloneSubrepos() {
+    if [ -f .gitmodules ]; then
+        git config -f '.gitmodules' --get-regex '^submodule\.[^.]*\.path$' |
+        while read key path; do
+            ${toolsdir}/bin/clone-subrepo "${path}"
+        done
+    fi
+}
+
+haveStdtools() {
+    git config -f .gitmodules submodule.stdtools.url >/dev/null 2>&1
+}
+
+isValidRef() {
+    git rev-parse --verify "$1" >/dev/null 2>&1
+}
+
+validateWorkingDir() {
+    local date="$1"
+    local topdir
+    local year=$(cut -d - -f 1 <<<"${date}")
+    local dir=$(basename "$(pwd)")
+
+    wdIsBelow "${year}" || die \
+"The current working directory '${dir}' is not below a
+directory '${year}'.  Our best practice is to place local repositories below a
+year directory.  If you do not want to follow this practice, use --force to
+override this check."
+
+    if [ "$(git rev-parse --is-inside-work-tree 2>/dev/null)" != "true" ]; then
+        return 0
+    fi
+    topdir="$(basename "$(git rev-parse --show-toplevel)")"
+    [ "${topdir}" == "${year}" ] || die \
+"The current working directory '${dir}' is below a git
+directory, whose toplevel dir does not match '${year}'.  If you do not want to
+follow this practice, use --force to override this check."
+
+    return 0
+}
+
+# A clone will be created below another directory if the current working
+# directory path contains `/another/` or ends with `/another`.
+wdIsBelow() {
+    pwd -P | egrep "/$1(/|\$)" >/dev/null
+}
+
+validateCreateDate() {
+    local date="$1"
+    if test ${opt_timeless}; then
+        if [ -z "${date}" ]; then
+            return 0
+        fi
+        die "--timeless requires name without date."
+    fi
+
+    local year=$(cut -d - -f 1 <<<"${date}")
+    case ${year} in
+    ${stdtoolsYear})
+        # ok
+        ;;
+    *)
+        die "--create is restricted to ${stdtoolsYear} repos."
+        ;;
+    esac
+    local regexYearOnly='^[0-9]{4}$'
+    if ! test ${opt_year} && egrep -q ${regexYearOnly} <<<"${date}"; then
+        die "Missing month for new repository.  Use --year to allow year-only."
+    fi
+    true
+}
+
+initRemote() {
+    local fullname="$1"
+    local date="$2"
+    local project="$3"
+    local shortname="$4"
+    if test ${opt_create}; then
+        echo "    Initializing '$(stdhostSuperdir ${project} "${date}")/$(stdhostSubdir ${shortname} "${date}")'..."
+        echo
+
+        printf "The repo will be owned by '%s'; confirm by typing the maintainerid: " "${arg_maintainerid}"
+        read -r ans
+        if ! [ "${ans}" = "${arg_maintainerid}" ]; then
+            die "Failed to confirm maintainerid."
+        fi
+        echo
+
+        local superdir=$(stdhostSuperdir ${project} "${date}")
+        local subdir="$(stdhostSubdir ${shortname} "${date}")"
+        callStdhostAsUser "${arg_maintainerid}" clone_init-remote \
+            "${cfg_initials}" \
+            "${fullname}" "${shortname}" \
+            "${superdir}" "${subdir}" \
+        || die "Failed to init remote repository."
+    else
+        echo "    Verifying that remote repository exists."
+        if ! callStdhost clone_check-remote-exists \
+            "$(stdhostSuperdir ${project} "${date}")/$(stdhostSubdir ${shortname} "${date}")/.git";
+        then
+            die "Remote repository doesn't exists, and --create is not specified.
+Without --create, the remote repository is expected to exist.  This is a safety
+check to protect you from accidentally creating a remote repository.
+"
+        fi
+    fi
+}
+
+indentByFour() {
+    sed -e 's/^/    /' -e 's/^    $//'
+}
+
+hasSyncTarget() {
+    [[ $(git config --file .toolsconfig --get-regexp "sync.[a-zA-Z_0-9\-]*.localdir") ]] &&
+    [[ $(git config --file .toolsconfig --get-regexp "sync.[a-zA-Z_0-9\-]*.remotedir") ]]
+}
+
+# `flatName()` converts a path into a simple filename by
+#
+#  -  replacing undesired characters with underscores (alphanumeric characters
+#     and dashes are preserved);
+#  -  collapsing multiple underscores into a single underscore;
+#  -  removing starting and trailing underscores.
+#
+flatName() {
+    printf '%s' "$1" \
+    | tr -C 'a-z0-9-' '_' \
+    | sed -e 's/__*/_/g' -e 's/^_*//' -e 's/_*$//'
+}
+
+validateBranchAlias() {
+    if ! egrep -q '^[a-z0-9-]+$' <<<"$1"; then
+        die 'Invalid `<branch-alias>`.'
+    fi
+}
+
+main "$@"

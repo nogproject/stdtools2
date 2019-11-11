@@ -151,6 +151,24 @@ cfg_projects() {
     die 'Missing stdhostprojects; set it with `git config --global stdtools.stdhostprojects <path>`.'
 }
 
+cfg_defaultmaintainerid() {
+    local id
+
+    # Use environment variable if set.
+    id="${STD_DEFAULT_MAINTAINER:-}"
+    if [ -n "${id}" ]; then
+        printf '%s' "${id}"
+        return
+    fi
+
+    # Use Git config if set.
+    if git config stdtools.defaultMaintainer; then
+        return
+    fi
+
+    die 'Missing default maintainer id; set it with `git config --global stdtools.defaultMaintainer <user>`.'
+}
+
 cfg_toolsconfig() {
     echo '.toolsconfig'
 }
@@ -750,6 +768,16 @@ grepRepoFullname() {
 
 isValidRepoFullname() {
     egrep -q "${ergxRepoFullname}" <<<"$1"
+}
+
+validateProjectName() {
+    isWellformedProjectName "$1" ||
+        die "Project name '$1' is malformed."
+}
+
+isWellformedProjectName() {
+    local ergx='^[a-zA-Z0-9-]+$'
+    egrep -q "${ergx}" <<<"$1"
 }
 
 split() {

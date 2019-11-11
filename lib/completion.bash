@@ -26,8 +26,13 @@ _stdtools2() {
     if (( ${COMP_CWORD} == 1 )); then
         local cmds='
             build
+            clone
+            clone-subrepo
             html-to-pdf
             init-hooks
+            init-project
+            init-toolsconfig
+            init-year
             publish-intern
             publish-merge-to-master
             publish-to-master
@@ -57,12 +62,81 @@ _stdtools2() {
             ;;
         esac
         ;;
+    clone)
+        case "${cur}" in
+        -*)
+            local opts='
+                -h --help
+                --create
+                --npdlink --no-npdlink
+                --pndlink --no-pndlink
+                --maintainerid
+                --year --timeless
+                --force
+                --lfs --no-lfs
+                --toolsconfig --no-toolsconfig
+                --subrepos --no-subrepos
+                --subrepo
+            '
+            COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+            return 0
+            ;;
+        esac
+        ;;
+    clone-subrepo)
+        case "${cur}" in
+        -*)
+            local opts='
+                -h --help
+            '
+            COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+            return 0
+            ;;
+        esac
+        ;;
     html-to-pdf)
         case "${cur}" in
         -*)
             local opts='
                 -h --help
                 --portrait --landscape
+            '
+            COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+            return 0
+            ;;
+        esac
+        ;;
+    init-project)
+        case "${cur}" in
+        -*)
+            local opts='
+                -h --help
+                --maintainerid
+            '
+            COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+            return 0
+            ;;
+        esac
+        ;;
+    init-toolsconfig)
+        case "${cur}" in
+        -*)
+            local opts='
+                -h --help
+                -f --force
+            '
+            COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+            return 0
+            ;;
+        esac
+        ;;
+    init-year)
+        case "${cur}" in
+        -*)
+            local opts='
+                -h --help
+                -y --yes
+                --maintainerid
             '
             COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
             return 0
