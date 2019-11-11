@@ -1,0 +1,48 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+export LC_ALL=C
+
+project="$1"
+
+if ! [ -d "${project}" ]; then
+    die "Project directory '${project}' does not exist; create it as $(id -un)."
+fi
+cd "${project}"
+
+if [ "$(stat --format=%u .)" != "$(id -u)" ]; then
+    die "Project directory '$(pwd)' not owned by maintainer $(id -un)."
+fi
+
+(
+    if [ -e '.git' ]; then
+        die "'$(pwd)/.git' already exists."
+    fi
+
+    echo '   GIT INIT'
+    umask 0007
+    chmod g+s .
+    git init --shared
+    stdlock 10
+    touch .gitignore .gitmodules
+    git add .gitignore .gitmodules
+    git commit -m 'init'
+) 10<"$(stdlockdir)"
+
+echo '   GIT STATUS'
+if [ -n "$(git status -s)" ]; then
+    git status || true
+    cat <<\EOF
+
+The project working copy is not clean.  Manually commit or exclude files until
+`git status` reports 'working tree clean'.
+
+Add year folders as submodules with:
+
+    git submodule add -- ./<year> <year>
+
+EOF
+fi
+
+exitok
