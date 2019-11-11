@@ -1,0 +1,268 @@
+#!/bin/bash
+# vim: sw=4
+set -o nounset -o errexit -o pipefail -o noglob
+
+toolsdir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+source "${toolsdir}/lib/lib.sh"
+
+usage() {
+    cat <<\EOF
+Usage:
+  doctor [--fix]
+
+Options:
+  --fix  Automatically fix some obvious problems.
+
+`stdtools doctor` inspects your environment and the current stdrepo working
+copy and reports protential problems.  It tries to fix some obvious problems
+when started with `--fix`.
+EOF
+    exit 1
+}
+
+main() {
+    argparse "$@"
+    stdhost=$(cfg_stdhost)
+    doctorLang
+    doctorPython
+    doctorLfs
+    doctorGit
+    doctorSsh
+    doctorSshConn
+    doctorLfsSsh
+}
+
+argparse() {
+    opt_fix=
+    while [ $# -ge 1 ]
+    do
+        case "$1" in
+        -h|--help)
+            usage
+            ;;
+        --fix)
+            opt_fix=t
+            shift
+            ;;
+        -*)
+            die "Unknown option $1"
+            ;;
+        *)
+            die "Unknown arg $1"
+            ;;
+        esac
+    done
+}
+
+doctorLang() {
+    err=
+
+    # `LC_ALL` cannot be checked, since toolslib sets it to `C`.  So we check
+    # only the other variables, which may be sufficient indication that the
+    # language settings are explicitly configured.
+
+    if [ "${LANG:-}" != 'en_US.UTF-8' ]; then
+        echo 'Unexpected \`LC_LANG\`.'
+        err=t
+    fi
+
+    if [ "${LANGUAGE:-}" != 'en_US.UTF-8' ]; then
+        echo 'Unexpected \`LANGUAGE\`.'
+        err=t
+    fi
+
+    if test ${err}; then
+        fail doctorLang
+        cat <<\EOF
+The recommended language settings are:
+
+    export LC_ALL=en_US.UTF-8
+    export LANG=en_US.UTF-8
+    export LANGUAGE=en_US.UTF-8
+
+See `userdoc.md` for details.
+
+EOF
+    fi
+}
+
+doctorPython() {
+    if ! ( checkPython3 ); then
+        fail doctorPython
+    fi
+}
+
+doctorLfs() {
+    doctorLfsStandalone
+}
+
+doctorLfsStandalone() {
+    err=
+    if ! ( checkGitLfsTransferToolsStandalone ); then
+        err=t
+    fi
+
+    if ! git lfs-x --version >/dev/null; then
+        echo 'Failed to run `git lfs-x --version`.
+
+Do you have a symlink to `vissys_stdtools_'${stdtoolsYear}'/zibtools/bin/git-lfs-x` in
+`~/bin`?
+'
+        err=t
+    fi
+
+    if test ${err}; then
+        fail doctorLfs
+    fi
+}
+
+doctorGit() {
+    local major minor err
+
+    IFS=. read -r major minor _ <<<"$(git version | sed -e 's/git version //')"
+
+    err=
+    if [ "${major}" -lt 2 ] || [ "${minor}" -lt 13 ]; then
+        err=t
+        echo "Wrong Git version; expected at least 2.13.0.rc1."
+    fi
+
+    if ! (
+        ( git update-index -h 2>&1 || true ) \
+        | fgrep -q -- '--assume-unchanged-once'
+    ); then
+        err=t
+        echo '`git update-index --assume-unchanged-once` missing.
+
+You should use our patched Git for LFS and Silo efficiency.
+'
+    fi
+
+    if test ${err}; then
+        fail doctorGit
+    fi
+}
+
+doctorSsh() {
+    local err
+
+    err=
+    if ! grep -q "Host ${stdhost}" ~/.ssh/config; then
+        echo "Missing \`Host ${stdhost}\` in \`~/.ssh/config\`."
+        err=t
+    fi
+
+    if ! grep -q 'ControlMaster' ~/.ssh/config; then
+        echo 'Missing `ControlMaster` in `~/.ssh/config`.
+
+You should use SSH connection sharing for efficiency, see
+<http://blogs.perl.org/users/smylers/2011/08/ssh-productivity-tips.html>.
+'
+        err=t
+    fi
+
+    if test ${err}; then
+        fail doctorSsh
+    fi
+}
+
+doctorSshConn() {
+    local err=
+    local errlog
+    errlog="$(mktemp)"
+
+    nOk=$(
+        echo conn{001..100} \
+        | xargs -n 1 -P 10 ssh "${stdhost}" echo 2>"${errlog}" \
+        | grep ^conn | wc -l
+    )
+
+    if [ -s "${errlog}" ]; then
+        cat "${errlog}"
+        cat <<\EOF
+
+If there are errors "ControlSocket ... disabling multiplexing" in the SSH
+stderr above and you are having problems with `git lfs push`, consider lowering
+the number of concurrent LFS transfers, like:
+
+    git config --global lfs.concurrenttransfers 4
+
+Alternatively, close all open SSH connections:
+EOF
+        cat <<EOF
+
+    ssh -O exit ${stdhost}
+
+EOF
+        cat <<\EOF
+Wait a bit.  Then retry `stdtools doctor` and `git lfs push`.
+EOF
+    fi
+    rm -f "${errlog}"
+
+    if [ $nOk -ne 100 ]; then
+        cat <<EOF
+Failed to open up to 10 concurrent SSH connections to ${stdhost}.  To debug,
+use the following commands:
+
+    echo conn{001..100} | xargs -n 1 -P 10 ssh ${stdhost} echo \\
+    | grep ^conn | wc -l
+
+It may output warnings.  But all 100 connections must succeed.
+EOF
+        err=t
+    fi
+
+    if test ${err}; then
+        fail doctorSshConn
+    fi
+}
+
+doctorLfsSsh() {
+    ( echo '.' && lsActiveSubmodulesRecursive ) \
+    | (
+        err=
+        while read -r dir; do
+            if ! doctorLfsSshInDir "${dir}"; then
+                err=t
+            fi
+        done
+        if test ${err}; then
+            fail doctorLfsSsh
+        fi
+    )
+}
+
+doctorLfsSshInDir() {
+    local dir="$1"
+    (
+        cd "${dir}"
+        if isConfiguredLfsSsh; then
+            if gitConfigHasAllLfsSshSettings; then
+                true  # Expected to be configured and is configured -> ok.
+            elif test ${opt_fix}; then
+                echo "    FIX INIT lfs ssh transfer \`${dir}\`"
+                setLfsSshConfig
+            else
+                echo "Incorrect LFS SSH origin config in \`${dir}\`; --fix can correct it."
+                return 1
+            fi
+        else
+            if ! gitConfigHasAnyLfsSshSetting; then
+                true  # Expected no LFS and non is configured -> ok.
+            elif test ${opt_fix}; then
+                echo "    FIX DEINIT lfs ssh transfer \`${dir}\`"
+                unsetLfsSshConfig
+            else
+                echo "Unexpected LFS SSH origin config in \`${dir}\`; --fix can correct it."
+                return 1
+            fi
+        fi
+    )
+}
+
+fail() {
+    printf '******** FAILED %s\n\n' "$1"
+}
+
+main "$@"
