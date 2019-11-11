@@ -1,0 +1,38 @@
+# --no-self-contained creates small HTML files with beautiful bootstrap-based
+# or github-like CSS.  It therefore is the default.
+# Images must be listed in build "copy".
+# The preferred CSS can be shared with:
+#     style = bootstrap|github.
+[build "pandoc"]
+	cmd = pandoc --no-self-contained
+	exclude = */stdtools/*
+	exclude = *.inc.md
+	include = *.md
+	exclude = *
+
+[build "copy"]
+	exclude = */stdtools/*
+	include = *.png
+	include = *.pdf
+
+[build "pandoc docx"]
+	cmd = pandoc --to docx
+	exclude = */stdtools/*
+	exclude = *.inc.md
+	exclude = *
+
+# 'pandoc pdf' uses LaTex to directly convert Markdown to PDF.  To obtain PDF
+# files based on the bootstrap or github stylesheets, use:
+#     stdtools html-to-pdf
+[build "pandoc pdf"]
+	cmd = pandoc --to pdf
+	exclude = */stdtools/*
+	exclude = *.inc.md
+	exclude = *
+
+# To keep files that project-specific tools create in product, declare them
+# here as relative paths inside product.
+#
+# Examples: 'include = /my-file', 'include = subdirAtAnyLevel/*'.
+[other]
+	exclude = *

@@ -1,0 +1,53 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+toolsdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)
+source "${toolsdir}/lib/lib.sh"
+
+usage() {
+    cat <<\EOF
+Usage:
+  init-toolsconfig [-f|--force]
+
+Options:
+  -f|--force    Overwrite existing `.toolsconfig`.
+
+Generate a useful default for `.toolsconfig`.
+EOF
+}
+
+main() {
+    argparse "$@"
+    isTopLevelDir || die "Not in toplevel directory of workspace."
+    if ! test ${opt_force} && [ -e .toolsconfig ]; then
+        die "'.toolsconfig' already exists; use --force to overwrite it."
+    fi
+    cp -f "${toolsdir}/lib/templates/toolsconfig" .toolsconfig
+}
+
+argparse() {
+    opt_force=
+    while [ $# -ge 1 ]
+    do
+        case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -f|--force)
+            opt_force=t
+            ;;
+        -*)
+            die "Unknown option $1"
+            ;;
+        *)
+            break
+            ;;
+        esac
+        shift
+    done
+    return 0
+}
+
+main "$@"
