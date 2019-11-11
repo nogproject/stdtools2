@@ -1,0 +1,40 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+main() {
+    repoPath="$1"
+    shift
+
+    cd "${repoPath}"
+    if test ${opt_all}; then
+        initAll
+    else
+        for sub in "$@"; do
+            initInDir "${sub}"
+        done
+    fi
+
+    exitok
+}
+
+initAll() {
+    initInDir '.'
+
+    lsActiveSubmodulesRecursive \
+    | while IFS= read -r sub; do
+        initInDir "${sub}"
+    done
+}
+
+initInDir() {
+    local path="$1"
+    echo "    INIT lfs ${path}/"
+    (
+        cd "${path}"
+        git lfs-x init
+        git lfs-x fsck --fix-perm
+    )
+}
+
+main "$@"

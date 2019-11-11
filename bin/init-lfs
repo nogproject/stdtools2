@@ -1,0 +1,108 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+toolsdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)
+source "${toolsdir}/lib/lib.sh"
+
+usage() {
+    cat <<\EOF
+Usage:
+  init-lfs
+  init-lfs [-a|--all] [<repo>]
+  init-lfs <repo> <subrepos>...
+
+Options:
+  <repo>      Full name of a stdrepo.  The default is to determine the repo for
+              the current directory, which may be explicitly indicated by `.`.
+  <subrepos>  Relative paths to subrepos.  Examples: `.`, `releases`.
+  -a --all    Initialize stdrepo and all subrepos.
+
+`stdtools init-lfs` initialize LFS stores in a remote stdrepo and its subrepos.
+EOF
+    exit 1
+}
+
+main() {
+    argparse "$@"
+
+    if [ -n "${arg_repo}" ]; then
+        case "${arg_repo}" in
+        .)
+            fullname="$(getRepoCommonName2)"
+            ;;
+        *)
+            validateRepoName "${arg_repo}"
+            fullname="${arg_repo}"
+            ;;
+        esac
+    else
+        fullname="$(getRepoCommonName2)"
+    fi
+    if ! isValidRepoFullname "${fullname}"; then
+        die "Failed to determine repo name."
+    fi
+
+    repoPath="$(repoPath "${fullname}")"
+
+    if ! maintainerid=$(callStdhost get-owner "${repoPath}"); then
+        die "Failed to determine maintainer of stdhost \`${repoPath}\`."
+    fi
+
+    stdhost=$(cfg_stdhost)
+
+    confirmNotice "
+Will init LFS for:
+
+ - repo: ${fullname}
+ - subrepos:$(
+if test ${opt_all}; then
+    printf 'all'
+else
+    printf " '%s'" "${arg_subrepos[@]}"
+fi
+)
+ - host: ${stdhost}
+ - directory: ${repoPath}
+ - maintainer: ${maintainerid}
+" "ok"
+
+    if ! (
+        callStdhostAsUser "${maintainerid}" \
+            init-lfs "${repoPath}" "${arg_subrepos[@]}"
+    ); then
+        die 'call to stdhost `init-lfs` failed.'
+    fi
+}
+
+argparse() {
+    opt_all=
+    arg_repo=
+    arg_subrepos=( '.' )
+    while [ $# -ge 1 ]; do
+        case "$1" in
+        -h|--help)
+            usage
+            ;;
+        -a|--all)
+            opt_all=t
+            shift
+            ;;
+        -*)
+            die "Unknown option $1"
+            ;;
+        *)
+            break
+            ;;
+        esac
+    done
+    if [ $# -ge 1 ]; then
+        arg_repo="$1"
+        shift
+    fi
+    if [ $# -ge 1 ]; then
+        arg_subrepos=( "$@" )
+    fi
+}
+
+main "$@"
