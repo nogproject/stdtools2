@@ -1,0 +1,32 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+export LC_ALL=C
+
+project="$1"
+year="$2"
+
+if ! [ -d "${project}" ]; then
+    die "Project directory '${project}' does not exist."
+fi
+cd "${project}"
+
+if ! [ -d '.git' ]; then
+    die "Missing '$(pwd)/.git'; maybe init-project."
+fi
+
+(
+    stdlock 10
+
+    umask 0007
+    mkdir "${year}"
+    chmod g+s "${year}"
+    cd "${year}"
+    git init --shared
+    touch .gitignore .gitmodules
+    git add .gitignore .gitmodules
+    git commit -m 'init'
+) 10<"$(stdlockdir)"
+
+exit ${cfg_exit_ok}

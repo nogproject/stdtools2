@@ -1,0 +1,85 @@
+#!/bin/bash
+# vim: sw=4
+set -o nounset -o errexit -o pipefail -o noglob
+
+toolsdir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+source "${toolsdir}/lib/lib.sh"
+
+usage() {
+    cat <<EOF
+Usage:
+  init-year [-y|--yes] [--maintainerid <uid>] <project>
+
+Options:
+  --maintainerid <uid>  (default: '$(cfg_defaultmaintainerid)')
+      The owner of the yearly folder.
+
+Init a remote project year folder.
+EOF
+}
+
+main() {
+    argparse "$@"
+    validateProjectName "${arg_project}"
+
+    stdhost="$(cfg_stdhost)"
+    projects="$(cfg_projects)"
+
+    confirmNotice "
+Will create project year subdirectory:
+
+  - host: ${stdhost}
+  - projects: ${projects}
+  - project: ${arg_project}
+  - year: ${stdtoolsYear}
+  - maintainerid: ${arg_maintainerid}
+" "ok"
+
+    if ! callStdhostAsUser "${arg_maintainerid}" \
+        init-year "${projects}/${arg_project}" "${stdtoolsYear}";
+    then
+        die 'Failed to run remote command.'
+    fi
+}
+
+argparse() {
+    arg_project=
+    opt_yes=
+    arg_maintainerid="$(cfg_defaultmaintainerid)"
+    while [ $# -ge 1 ]
+    do
+        case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -y|--yes)
+            opt_yes=t
+            ;;
+        --maintainerid)
+            shift
+            [ $# -ge 1 ] ||
+                die "--maintainerid requires an argument."
+            arg_maintainerid="$1"
+            ;;
+        -*)
+            die "unknown option $1"
+            ;;
+        *)
+            break
+            ;;
+        esac
+        shift
+    done
+    case $# in
+    1)
+        arg_project="$1"
+        ;;
+    *)
+        die "Wrong number of arguments."
+        ;;
+    esac
+    return 0
+}
+
+main "$@"
