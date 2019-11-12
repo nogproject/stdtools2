@@ -1,0 +1,70 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+main() {
+    masterhost="$1"
+    masterpath="$2"
+    releases="$3"
+
+    cd "${masterpath}"
+    (
+        stdlock 10
+        initReleases
+    ) 10<"$(stdlockdir)"
+
+    exitok
+}
+
+initReleases() {
+    if [ -d "${releases}" ]; then
+        echo "    skipping INIT ${masterhost}:${masterpath}/${releases} (already exists)"
+        return
+    fi
+
+    echo "    INIT ${masterhost}:${masterpath}/${releases}"
+    mkdir "${releases}"
+    cd "${releases}"
+    git init --shared
+    echo '.DS_Store' >.gitignore
+    git add .gitignore
+    git commit -m 'initial commit'
+
+    mkdir "$(git rev-parse --git-path 'lfs')"
+    mkdir "$(git rev-parse --git-path 'lfs/objects')"
+    git lfs-x fsck --fix-perms
+
+    cat >.gitattributes <<\EOF
+* filter=lfs diff=lfs merge=lfs -text
+*.html -filter !diff !merge text
+.* -filter !diff !merge text
+EOF
+    git add .gitattributes
+    git commit -m 'gitattributes: Use LFS except for HTML and dot files
+
+Use Git for HTML and dot files.
+'
+
+    cat >.htaccess <<\EOF
+# Hide git from http.
+RedirectMatch 404 .*/[.]git
+
+# Grant access without password (to visual.zib.de from outside ZIB).
+allow from all
+satisfy any
+
+# Enable directory listings.
+Options +Indexes
+
+# Set content types, so that browsers download files as binary.
+AddType application/x-amira .am .surf
+EOF
+    git add .htaccess
+    git commit -m 'htaccess: Hide git, grant access without password'
+
+    cd ..
+    git submodule add "./${releases}" "${releases}"
+    git commit -m "Add submodule '${releases}'"
+}
+
+main "$@"

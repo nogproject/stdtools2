@@ -1,0 +1,144 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+toolsdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)
+source "${toolsdir}/lib/lib.sh"
+
+releases=$(cfg_releases)
+
+usage() {
+    cat <<\EOF
+Usage:
+  init-releases
+
+`stdtools init-releases` initializes the remote `releases` subrepo.  You must
+`stdtools publish-to-master` before and after running `stdtools init-releases`.
+
+The subrepo will use LFS for all files except HTML and adminstrative files.
+EOF
+    exit 1
+}
+
+main() {
+    argparse "$@"
+    config
+    confirmNotice "
+Will create '${releases}' submodule:
+
+  - as user: ${maintainerid}
+  - at host: ${masterhost}
+  - in directory: ${masterpath}/${releases}
+  - storage: LFS
+" "ok"
+
+    requireRemoteIsOnBranchMaster
+    requireHEADIsOriginMaster
+
+    if ! callStdhostAsUser "${maintainerid}" init-releases \
+        "${masterhost}" "${masterpath}" "${releases}";
+    then
+        die "Failed to init remote releases."
+    fi
+
+    pullMaster
+    initReleasesIndex
+    cat <<EOF
+
+Publish the results with
+
+    ${toolsdir}/bin/publish-to-master
+
+EOF
+}
+
+argparse() {
+    while [ $# -ge 1 ]
+    do
+        case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -*)
+            die "Unknown option $1"
+            ;;
+        *)
+            break
+            ;;
+        esac
+        shift
+    done
+    return 0
+}
+
+config() {
+    echo "    CONFIG"
+    maintainerid=$(cfg_maintainerid)
+
+    local url
+    if ! url="$(parseRemoteURL)"; then
+        die 'Failed to parse remote URL.'
+    fi
+    IFS=: read -r masterhost masterpath <<<"${url}"
+
+    stdhost=$(cfg_stdhost)
+    if [ "${masterhost}" != "${stdhost}" ]; then
+        die "Master host \`${masterhost}\` from remote != stdhost \`${stdhost}\` from config."
+    fi
+}
+
+requireRemoteIsOnBranchMaster() {
+    echo "    CHECK remote repo"
+    if ! callStdhost init-releases_check-master "${masterpath}"; then
+        die "Remote repository is on wrong branch (expected to be on branch 'master')."
+    fi
+}
+
+requireHEADIsOriginMaster() {
+    echo "    CHECK local repo"
+    git fetch
+    if [ "$(git rev-parse HEAD)" != "$(git rev-parse origin/master)" ]; then
+        die "Local HEAD does not match branch 'origin/master' (expected: both point to the same commit)."
+    fi
+}
+
+pullMaster() {
+    echo "    PULL master"
+    git fetch
+    git merge origin/master
+    git submodule update --init "${releases}"
+    ( cd "${releases}" && setLfsSshConfig )
+}
+
+initReleasesIndex() {
+    if [ -e "${releases}/index.html" ]; then
+        echo "    skipping INIT ${releases}/index.html (already exists)"
+        return
+    fi
+    echo "    INIT ${releases}/index.html"
+    cd "${releases}"
+    cat <<\EOF >index.html
+<!DOCTYPE HTML>
+<html lang="en-US">
+    <head>
+        <meta charset="UTF-8">
+        <meta http-equiv="refresh" content="1;url=latest">
+        <script type="text/javascript">
+            window.location.href = "latest"
+        </script>
+        <title>Page Redirection</title>
+    </head>
+    <body>
+    If you are not redirected automatically, follow the <a href='latest'>link to latest</a>.
+    </body>
+</html>
+EOF
+    git add index.html
+    git commit -m 'Add index.html that forwards to latest/'
+    cd ..
+    git add "${releases}"
+    git commit -m "${releases}: Add forwarding to latest/"
+}
+
+main "$@"

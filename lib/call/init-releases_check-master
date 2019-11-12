@@ -1,0 +1,8 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+masterpath="$1"
+cd "${masterpath}"
+git branch | grep ^* | cut -b 3- | grep -q '^master$'
+exitok
