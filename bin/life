@@ -1,0 +1,165 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+toolsdir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)"
+source "${toolsdir}/lib/lib.sh"
+
+usage() {
+    cat <<\EOF
+Usage:
+  life retire
+  life deprecate-retire
+  life deprecate-freeze
+  life freeze
+
+`stdtools life <stage>` udpates the notice in `version.inc.md` to the specified
+stage.
+
+Use `stdtools deprecate-retire` if the repo is going to be retired after the
+deprecation period.  Use `stdtools deprecate-freeze` if the repo is going to be
+frozen.
+EOF
+    exit 1
+}
+
+defaultVersionInc() {
+    cat <<\EOF
+% @@DATE@@[^version]
+
+[^version]: @@VERSION@@ of repo `@@REPO@@`.
+Next generations: none.
+Previous generations: none.
+EOF
+}
+
+info_retire() {
+    cat <<\EOF
+THIS REPO GENERATION HAS BEEN RETIRED.
+
+This repo generation will not be updated anymore.
+
+Updates and new information will be added to the next repo generation.
+EOF
+}
+
+info_deprecate_retire() {
+    cat <<\EOF
+THIS REPO GENERATION HAS BEEN DEPRECATED.
+
+This repo generation should not be updated anymore.  It will be retired.
+
+The information here might be outdated.  Updates and new information should
+be be added to a next repo generation.
+EOF
+}
+
+info_freeze() {
+    cat <<\EOF
+THIS REPO GENERATION HAS BEEN FROZEN.
+
+The information here is still relevant.
+
+New information should be added elsewhere.
+EOF
+}
+
+info_deprecate_freeze() {
+    cat <<\EOF
+THIS REPO GENERATION HAS BEEN DEPRECATED.
+
+This repo generation will be frozen.
+
+New information should be added elsewhere.
+EOF
+}
+
+main() {
+    argparse "$@"
+
+    if haveChanges; then
+        die "Uncommited changes."
+    fi
+
+    if haveUntrackedFiles; then
+        die "Untracked files."
+    fi
+
+    if ! isTopLevelDir; then
+        die "Wrong working directory; execute in the toplevel directory '$(git rev-parse --show-toplevel)'."
+    fi
+
+    local vmd='version.inc.md'
+    if ! [ -e "${vmd}" ]; then
+        defaultVersionInc >"${vmd}"
+        git add -- "${vmd}"
+        echo "Created default ${vmd}."
+    fi
+
+    repo="$(getRepoCommonName2)"
+    if ! isValidRepoFullname "${repo}"; then
+        die "Failed to determine <repo> from current directory."
+    fi
+    read _ _ date _ <<<"$(parseRepoName ${repo})"
+
+    cat "${vmd}" \
+    | sed -n \
+          -e '1,/^ *$/ p' \
+          -e '/^\[^version\]:/,/^ *$/ p' \
+    | deleteTrailingBlankLines \
+    >"${vmd}.tmp"
+    echo >>"${vmd}.tmp"
+    info_${arg_stage} >>"${vmd}.tmp"
+    mv "${vmd}.tmp" "${vmd}"
+
+    # Drop deprecate details, e.g. "deprecate_freeze" -> "deprecate".
+    stageMsg="${arg_stage/_*/}"
+    if git commit -m "life: ${stageMsg} ${date} generation" -- "${vmd}"; then
+        echo
+        echo "Updated ${vmd} notice to ${stageMsg}."
+    fi
+}
+
+# See 'delete all trailing blank lines at end of file'
+# <http://sed.sourceforge.net/sed1line.txt>.
+deleteTrailingBlankLines() {
+    sed -e :a -e '/^\n*$/{$d;N;ba' -e '}'
+}
+
+argparse() {
+    arg_stage=
+    opt_compression=gzip
+    while [ $# -ge 1 ]; do
+        case "$1" in
+        -h|--help)
+            usage
+            ;;
+        -*)
+            die "unknown option $1"
+            ;;
+        *)
+            break
+            ;;
+        esac
+        shift
+    done
+    if [ $# -ne 1 ]; then
+        die "Wrong number of arguments."
+    fi
+    case $1 in
+    retire|freeze)
+        arg_stage="$1"
+        ;;
+    deprecate-freeze)
+        arg_stage='deprecate_freeze'
+        ;;
+    deprecate-retire)
+        arg_stage='deprecate_retire'
+        ;;
+    *)
+        die "Invalid argument \`$1\`."
+        ;;
+    esac
+}
+
+main "$@"

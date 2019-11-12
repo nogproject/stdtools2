@@ -36,6 +36,7 @@ _stdtools2() {
             init-releases
             init-toolsconfig
             init-year
+            life
             publish-intern
             publish-merge-to-master
             publish-to-master
@@ -183,6 +184,17 @@ _stdtools2() {
             return 0
             ;;
         esac
+        ;;
+    life)
+        if (( ${COMP_CWORD} == 2 )); then
+            local opts='
+                retire
+                deprecate-retire deprecate-freeze
+                freeze
+            '
+            COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+            return 0
+        fi
         ;;
     publish-intern)
         case "${cur}" in
