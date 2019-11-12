@@ -181,6 +181,10 @@ cfg_releases() {
     echo 'releases'
 }
 
+cfg_latest() {
+    echo 'latest'
+}
+
 # `activateToolsEnv` activates the environment without slow sanity checks.
 #
 # `activateToolsEnvChecked` does the same but with additional sanity checks to
@@ -272,6 +276,10 @@ gitattributesContainLfs() {
     fi
 
     return 0
+}
+
+isActiveLfs() {
+    isActiveLfsSsh
 }
 
 hasConfigLfsStandalonetransferSsh() {
@@ -495,6 +503,28 @@ processFiles() {
     done
 }
 
+# usage: getVersion
+#
+# Create version key from closest tagged or non-release commit.  Release
+# commits are commits that touch only 'releases'.  They are ignored to avoid
+# spurious version changes after creating a release.
+#
+# version format: `<tag>` or `<committer-ISO-date>-g<sha1-6digits>`; with
+# suffix `-dirty-<unix-seconds>` if the working copy is dirty.
+#
+# The committer date indicates when the commit was touched the last time.  The
+# author date might be older, because it is kept when cherry-picking.
+getVersion() {
+    local c
+    c=$(findVersioningCommit)
+    if gitStatusIsClean; then
+        git describe --exact-match ${c} 2> /dev/null ||
+        git show --abbrev=6 -s --pretty='%cd-g%h' --date=short ${c}
+    else
+        git show --abbrev=6 -s --pretty="%cd-g%h-dirty-$(date +%s)" --date=short ${c}
+    fi
+}
+
 # Like getVersion, but appends the detailed version info for tagged versions.
 getVersionHuman() {
     local c tag
@@ -508,6 +538,12 @@ getVersionHuman() {
     else
         git show --abbrev=6 -s --pretty="%cd-g%h-dirty-$(date +%s)" --date=short ${c}
     fi
+}
+
+getVersionTarDate() {
+    local c
+    c=$(findVersioningCommit)
+    git show -s --pretty=format:%cd --date=iso ${c} | cut -d ' ' -f 1,2
 }
 
 # Walk along the first parent to a commit that is either tagged or does touch

@@ -1,0 +1,419 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+toolsdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)
+source "${toolsdir}/lib/lib.sh"
+
+product=$(cfg_product)
+releases=$(cfg_releases)
+latest=$(cfg_latest)
+
+usage() {
+    cat <<\EOF
+Usage:
+  release [-f|--force] [--pack|--no-pack] [-m <message>] [-y|--yes]
+
+Options:
+  -f|--force    Skip checks for uncommitted changes, untracked files, and LFS
+                placeholders.
+  -m <message>  Commit with `<message>` without opening an editor.
+  -y|--yes      Assume yes to all confirmations.
+
+  --pack|--no-pack  [default: yes if `toolsconfig.release.type` is `packed`]
+        Pack the subdirs of `product/` into a tar file in `releases/`.  The
+        subdir `img` is not packed, because it usually contains images that are
+        linked from html files.
+
+`stdtools release` creates a release.  It copies `product/` to a sub-directory
+in `releases/` and commits.
+EOF
+}
+
+main() {
+    argparse "$@"
+    activateToolsEnvChecked
+    echo 'Creating release in local `releases/`.'
+    releaseLocal
+}
+
+releaseLocal() {
+    detectTools
+    if ! test ${opt_force}; then
+        haveChanges && die "uncommited changes; commit everything before release."
+        haveUntrackedFiles && die "untracked files; commit everything before release."
+    fi
+
+    if ! [ -d "${releases}" ]; then
+        die "Missing \`${releases}\`."
+    fi
+
+    # Check that `releases/` uses LFS in order to protect against unexpected
+    # behavior.
+    if ( cd "${releases}" && isActiveLfs ); then
+        if ! test ${opt_force}; then
+            requireAllLfsContent "${releases}"
+        fi
+    else
+        die "\`${releases}\` does not use LFS."
+    fi
+
+    version=$(getVersion)
+    tarDate="$(getVersionTarDate)"
+    isTaggedVersion=
+    if isTaggedCommit HEAD; then
+        isTaggedVersion=t
+        requireNoTagDir
+    fi
+
+    userConfirmation
+
+    configLfsAlternates
+    updateReleaseLatest
+    if test ${isTaggedVersion}; then
+        cpReleaseTagDir
+        updateReleaseIndex
+    fi
+    commitReleases
+    commitSuper
+
+    if test ${isTaggedVersion}; then
+        echo
+        echo "Created tagged release."
+    fi
+}
+
+argparse() {
+    opt_force=
+    arg_message=
+    opt_pack=$(cfg_releasePacked)
+    opt_yes=
+    while [ $# -ge 1 ]
+    do
+        case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -f|--force)
+            opt_force=t
+            ;;
+        --pack)
+            opt_pack=t
+            ;;
+        --no-pack)
+            opt_pack=
+            ;;
+        -y|--yes)
+            opt_yes=t
+            ;;
+        -m|--message)
+            shift
+            arg_message="$1"
+            ;;
+        -*)
+            die "Unknown option $1"
+            ;;
+        *)
+            break
+            ;;
+        esac
+        shift
+    done
+    return 0
+}
+
+userConfirmation() {
+    if ! test ${opt_pack} && [ $(countFiles "${product}") -gt 100 ]; then
+      confirmWarning "
+"${product}" contains more than 100 files.  Maybe you should use
+the option --pack to create a packed release, because Git LFS, which is used
+to manage the releases, works better with a small number of large files.
+" "continue"
+    fi
+
+    if test ${isTaggedVersion}; then
+        confirmNotice "
+Will create tagged release.  The current product will be released to subdir
+'latest' and subdir '${version}'.
+$(test ${opt_pack} && echo 'The subdirs will be packed.')
+" "ok"
+    else
+        confirmNotice "
+Will create snapshot release.
+$(test ${opt_pack} && echo 'The subdirs will be packed.')
+" "ok"
+    fi
+}
+
+countFiles() {
+    find "$1" -type f | wc -l
+}
+
+requireNoTagDir() {
+    if [ -e ${releases}/${version} ]; then
+        die "Directory '${releases}/${version}' that matches current tag already exists."
+    fi
+}
+
+updateReleaseLatest() {
+    targetdir="${releases}/${latest}"
+    if test ${opt_pack}; then
+        rm -rf "${targetdir}"
+        copyProductShallow
+        packProductSubdirs
+    else
+        copyProduct
+        removeIfNotProduct
+    fi
+    (
+        cd ${releases} &&
+        if isActiveLfs; then
+            find "${latest}" -type f \
+            | ( grep -v '/\.' || true ) \
+            | ( grep -v '\.html' || true ) \
+            | tr '\n' '\0' \
+            | ${gxargs} -0 --no-run-if-empty git lfs-x add --
+        fi &&
+        git add -A -- "${latest}"
+    )
+}
+
+cpReleaseTagDir() {
+    srcdir="${releases}/${latest}"
+    targetdir="${releases}/${version}"
+    echo "    CP ${targetdir}"
+    ${gcp} -al "${srcdir}" "${targetdir}"
+    (
+        cd ${releases} &&
+        if isActiveLfs; then
+            find "${version}" -type f \
+            | ( grep -v '/\.' || true ) \
+            | ( grep -v '\.html' || true ) \
+            | tr '\n' '\0' \
+            | ${gxargs} -0 --no-run-if-empty git lfs-x add --
+        fi &&
+        git add -A -- "${version}"
+    )
+}
+
+updateReleaseIndex() {
+    (
+        echo "latest"
+        cd releases &&
+        find . -mindepth 1 -maxdepth 1 -type d |
+        sed -e 's@^\./@@' |
+        grep -v '^latest' |
+        sort -r
+    ) |
+    genDirListingHTML > "${releases}/index.html"
+    (
+        cd releases &&
+        git add index.html
+    )
+}
+
+genDirListingHTML() {
+    cat <<\EOF
+<!DOCTYPE HTML>
+<html lang="en-US">
+    <head>
+        <meta charset="UTF-8">
+        <title>Released Versions</title>
+    </head>
+    <body>
+    <h1>Released Versions</h1>
+    <ul>
+EOF
+    while IFS= read -r path; do
+        printf '      <li><a href="%s/">%s</a></li>\n' "${path}" "${path}"
+    done
+    cat <<\EOF
+    </ul>
+    </body>
+</html>
+EOF
+}
+
+copyProductShallow() {
+    (
+      find "${product}" -maxdepth 1 -type f
+      if [ -d "${product}/img" ]; then
+          find "${product}/img" -type f
+      fi
+    ) |
+    sed -e "s@${product}/@@" |
+    processFiles cmdCopy
+}
+
+# Use sorted paths with timestamp from git to get reproducible tars.
+packProductSubdirs() {
+  dst="${targetdir}/packed.tar.bz2"
+  echo "    TAR ${dst}"
+  (
+    find "${product}" -mindepth 2 -type f
+  ) |
+  sed -e "s@${product}/@@" |
+  grep -v "^img/" |
+  sort |
+  gtarbz2 -C "${product}" >"${dst}"
+}
+
+copyProduct() {
+    find "${product}" -type f |
+    sed -e "s@${product}/@@" |
+    processFiles cmdCopy
+}
+
+cmdCopy() {
+    local path="$1"
+    local src="${product}/${path}"
+    local dest="${targetdir}/${path}"
+
+    mkdir -p "$(dirname "${dest}")"
+
+    # Check permission to contain Windows behavior that deleting hard link
+    # changes file to writable.
+    if [ -w "${src}" ] && isHardLink "${src}"; then
+        printf >&2 "Warning: fixing permission to read-only for hard link '%s'.\n" "${src}"
+        chmod a-w "${src}" || true
+    fi
+
+    # Copy if src is writable; otherwise create hard link to save space.
+    if [ -w "${src}" ]; then
+        # Don't skip copy based on timestamp to ensure that the release always
+        # contains the current version even if releases got intialized after
+        # the build.  The large files will be linked anyway, so the copy should
+        # be relatively cheap.
+        echo "    CP ${dest}"
+        rm -f "${dest}"
+        cp "${src}" "${dest}"
+    else
+        # Skip if src and dest already point to the same inode.
+        [ "${src}" -ef "${dest}" ] && continue
+
+        echo "    LN ${dest}"
+        rm -f "${dest}"
+        ln "${src}" "${dest}"
+    fi
+}
+
+removeIfNotProduct() {
+    find "${targetdir}" -type f |
+    sed -e "s@${targetdir}/@@" |
+    processFiles cmdRemoveIfNotProduct
+}
+
+cmdRemoveIfNotProduct() {
+    local path="$1"
+    local src="${product}/${path}"
+    local dest="${targetdir}/${path}"
+
+    if [ -e "${src}" ]; then
+        return
+    fi
+    echo "    RM ${dest}"
+    rm -f "${dest}"
+}
+
+# Use `git commit --quiet` to skip commit summary to avoid problems with 32-bit
+# git and large files.
+#
+# Use `git commit --no-verify` to skip permission checks.  The file permissions
+# have already been validated when committing to the super repo.
+commitReleases() {
+    local versionType="snapshot "
+    local edit=--edit
+    if test "${arg_message}"; then
+        edit=
+    fi
+    test ${isTaggedVersion} && versionType=
+    local msg="${versionType}${version} ${arg_message}"
+    echo "    COMMIT $releases"
+    (
+        cd "${releases}" &&
+        requireIsToplevelDir &&
+        git commit --no-verify --quiet ${edit} -m "${msg}"
+    ) || exit 1
+}
+
+commitSuper() {
+    echo "    COMMIT ."
+    git commit \
+        -m "${releases}: $(cd "${releases}"; git show -s --pretty=%s)" \
+        -- "${releases}"
+}
+
+requireAllLfsContent() {
+    local dir="$1"
+    if ( cd "${dir}" && git lfs ls-files | grep '^[0-9a-f]* -' ); then
+        die "'${dir}' contains LFS placeholders."
+    fi
+}
+
+detectTools() {
+    gcp=
+    search='gcp cp'
+    for t in ${search}; do
+        if type ${t} >/dev/null 2>&1 &&
+            ( ${t} --version 2>/dev/null | grep -q GNU ); then
+            gcp="${t}"
+            break
+        fi
+    done
+    test ${gcp} || die "Missing GNU cp; tried: ${search}
+
+You may need to install coreutils.
+On Mac OS X, you can install them with: brew install coreutils
+"
+
+    gtar=
+    search='gnutar gtar tar'
+    for t in ${search}; do
+        if type ${t} >/dev/null 2>&1 &&
+            ( ${t} --version 2>/dev/null | grep -q GNU ); then
+            gtar="${t}"
+            break
+        fi
+    done
+    test ${gtar} || die "Missing GNU tar; tried: ${search}
+
+On Mac OS X, you can install it with: brew install gnu-tar
+"
+
+    gxargs=
+    search='gxargs xargs'
+    for t in ${search}; do
+        if type ${t} >/dev/null 2>&1 &&
+            ( ${t} --version 2>/dev/null | grep -q GNU ); then
+            gxargs="${t}"
+            break
+        fi
+    done
+    test ${gxargs} || die "Missing GNU xargs; tried: ${search}
+
+On Mac OS X, you can install it with: brew install findutils
+"
+}
+
+gtarbz2() {
+    ${gtar} "$@" \
+        --mtime="${tarDate}" \
+        --owner=root --group=root \
+        --mode='u+rwX,g+rX,g-w,o=g' \
+        --files-from - \
+        -cj
+}
+
+cfg_releasePacked() {
+  local cfg
+  cfg="$(git config -f "$(cfg_toolsconfig)" release.type)" || return 0
+  case "${cfg}" in
+  packed)
+      echo t
+      ;;
+  *)
+      die "Invalid '.toolsconfig.release.pack'; expected none or 'packed', got '${cfg}'."
+  esac
+}
+
+main "$@"
