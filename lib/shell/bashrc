@@ -23,8 +23,7 @@ cat >"${HOME}/.gitconfig" <<\EOF
 	required = true
 EOF
 
-# `rc-spr` switches to spr's preferences, activated by default if the remote
-# user is bzfproha.
+# `rc-spr` switches to spr's preferences.
 rc-spr() {
     echo "Using spr's preferences: readline vi mode, vim"
     cat <<\EOF >"${HOME}/.inputrc"
