@@ -1,0 +1,75 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+toolsdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)
+source "${toolsdir}/lib/lib.sh"
+
+usage() {
+    cat <<\EOF
+Usage:
+  search <egrep-regex>
+
+`stdtools search` searches repos whose name or path match the extended regex,
+case ignored.  The output are lines:
+
+    <repo> <status-flags> <path>
+
+The `<status-flags>` are:
+
+ - `repopacked`: The repo has been archived with `stdtools archive-repopack`.
+
+ - `retired`: The toplevel Markdown files indicate retired.
+ - `frozen`: The toplevel Markdown files indicate frozen.
+ - `deprecated`: The toplevel Markdown files indicate deprecated.
+ - `active`: The toplevel Markdown files do not indicate a special status.
+
+ - `lfsattrs`: The toplevel `.gitattributes` contains Git LFS attributes.
+ - `lfsstore`: The repo does not have `lfsattrs`, but `.git/lfs` exists.
+
+ - `siloattrs`: The toplevel `.gitattributes` contains Git Silo attributes.
+ - `silostore`: The repo does not have `siloattrs`, but `.git/silo` exists.
+
+EOF
+}
+
+main() {
+    argparse "$@"
+    projects="$(cfg_projects)"
+    projectPaths="$(
+        ( git config --get-regexp '^stdtools[.]projectsPath[.][a-z0-9]*$' || true ) \
+        | cut -d . -f 3-
+    )"
+    if ! callStdhost search "${arg_regex}" "${projects}" "${projectPaths}"; then
+        die "Failed to run remote command."
+    fi
+}
+
+argparse() {
+    while [ $# -ge 1 ]; do
+        case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -*)
+            die "Unknown option $1"
+            ;;
+        *)
+            break
+            ;;
+        esac
+        shift
+    done
+    case $# in
+    1)
+        arg_regex="$1"
+        ;;
+    *)
+        die "Wrong number of arguments."
+        ;;
+    esac
+    return 0
+}
+
+main "$@"
