@@ -820,6 +820,13 @@ split() {
     sed -e "s@$1@ @g" <<<"$2"
 }
 
+countSlashes() {
+    # Delete all non-slashes; then return length of string.
+    local str="$1"
+    str=$(sed -e 's/[^/]*//g' <<<"${str}")
+    printf '%d' "${#str}"
+}
+
 # `configLfsAlternates` sets silo.alternate in releases to point to all
 # submodules with silo except releases itself.
 configLfsAlternates() {

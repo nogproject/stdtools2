@@ -1,0 +1,101 @@
+#!/bin/bash
+
+set -o errexit -o nounset -o pipefail -o noglob
+
+export LC_ALL=C
+
+main() {
+    srcname="$1"
+    srcpath="$2"
+    dstname="$3"
+    dstpath="$4"
+    branch="$5"
+
+    checkSource
+    checkDest
+
+    exitok
+}
+
+# Full `checkSource` in `call/promote_preflight` and subset in `call/promote`.
+checkSource() {
+    cd "${srcpath}"
+
+    prefix="$(git rev-parse --show-prefix)" ||
+        die "'${srcpath}' is not a git working copy."
+
+    [ -z "${prefix}" ] ||
+        die "'${srcpath}' is not the root of a git working copy."
+
+    if ! checkNoSilo; then
+        die 'Silo check failed: repo must be migrated to LFS before promoting.'
+    fi
+
+    if test ${opt_verify_tagged}; then
+        if ! isTagged; then
+            die "Error: branch '${branch}' in '${srcpath}' does not point to tag."
+        fi
+    fi
+}
+
+isTagged() {
+    isTaggedCommit "${branch}" ||
+    ( isReleaseCommit "${branch}" && isTaggedCommit "${branch}^" ) ||
+    ( isClosingCommit "${branch}" && isTaggedCommit "${branch}^" ) ||
+    ( isClosingCommit "${branch}" && isReleaseCommit "${branch}~1" && isTaggedCommit "${branch}~2" )
+}
+
+isClosingCommit() {
+    [ "$(git diff-tree $1^..$1 --name-only)" = 'version.inc.md' ]
+}
+
+checkNoSilo() {
+    ( echo '.' && lsActiveSubmodulesRecursive ) \
+    | (
+        err=
+        while read -r dir; do
+            if isActiveSiloInDir "${dir}"; then
+                echo "fatal: Git Silo in \`${PWD}\`."
+                err=t
+            fi
+        done
+        if test ${err}; then
+            return 1
+        fi
+    )
+}
+
+isActiveSiloInDir() {
+    ( cd "$1" && isActiveSilo )
+}
+
+isActiveSilo() {
+    if ! [ -d "$(git rev-parse --git-path silo/objects)" ]; then
+        return 1
+    fi
+
+    local gitattributes
+    gitattributes="$(git rev-parse --show-toplevel)/.gitattributes"
+    if ! [ -e "${gitattributes}" ]; then
+        return 1
+    fi
+
+    if ! grep -q 'filter=silo' "${gitattributes}"; then
+        return 1
+    fi
+
+    return 0
+}
+
+checkDest() {
+    local superdir="$(dirname "${dstpath}")"
+
+    if ! [ -e "${superdir}/.gitmodules" ]; then
+        die "Missing '${superdir}/.gitmodules' (expected git repo with submodules at '${superdir}').
+If '${superdir}' is a yearly folder, see 'stdtools init-year -h' to create it.
+If '${superdir}' is a project folder, see 'stdtools init-project -h' to create it.
+"
+    fi
+}
+
+main "$@"

@@ -1,0 +1,295 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+toolsdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)
+source "${toolsdir}/lib/lib.sh"
+
+usage() {
+    cat <<\EOF
+Usage:
+  promote [-y|--yes] [--verify-tagged|--no-verify-tagged]
+          [--maintainer <uid>]
+          [--year] [--timeless] [--to <date-or-fullname>]
+          [--branch <branch>] [<repo>]
+
+Options:
+    --to <date-or-fullname>  [default: date from today, rest from <repo>]
+        Explicitly specify the name of the new repo.
+    --branch <branch>  [default: master]
+        Promote the specified branch from the old repo to the new master.
+    --maintainer <uid>  [default: git config stdtools.defaultMaintainer]
+        Use `<uid>` when connecting via SSH to create the remote repository.
+    --year  [default: no]
+        Allow year-only `<date>` during create.  The default is to require a
+        month, because it is what we usually want.
+    --timeless [default: no]
+        Allow `<repo>` to use a timeless `<project>_<shortname>` name.
+    --verify-tagged, --no-verify-tagged  [default: yes]
+        Do not verify that branch 'master' of '<repo>' points to a tagged
+        commit.
+    -y|--yes  Assume yes to all confirmations.
+
+`stdtools promote` creates a new repo generation and migrates data from the
+previous generation.  It fetches branch `master` from `<repo>` and clones all
+subrepos, that is submodules whose paths start with './'.  Tags are not fetched
+to the new repo.
+
+The default is to promote the repo for the current working directory.  Specify
+a `<repo>` fullname to promote a different repo.
+
+Repos must be migrated to LFS before they can be promoted to 2018 or later.
+EOF
+}
+
+main() {
+    argparse "$@"
+
+    if [ -n "${arg_repo}" ]; then
+        srcname="${arg_repo}"
+    else
+        srcname="$(getRepoCommonName2)"
+        if ! isValidRepoFullname "${srcname}"; then
+            die "Failed to determine <repo> from current directory."
+        fi
+
+        if haveChanges; then
+            die "Uncommited changes; commit everything before promote."
+        fi
+
+        if haveUntrackedFiles; then
+            die "Untracked files; commit everything before promote."
+        fi
+
+        if ! isTopLevelDir; then
+            die "Wrong working directory; you must promote from the toplevel directory '$(git rev-parse --show-toplevel)'."
+        fi
+    fi
+
+    if [ -n "${arg_to}" ]; then
+        if isValidRepoFullname "${arg_to}"; then
+            dstname="${arg_to}"
+        else
+            read shortname project _ <<<"$(parseRepoName ${srcname})"
+            dstname="${project}_${shortname}_${arg_to}"
+        fi
+    else
+        read shortname project _ <<<"$(parseRepoName ${srcname})"
+        if test ${opt_timeless}; then
+            dstname="${project}_${shortname}"
+        elif test ${opt_year}; then
+            date=$(date +%Y)
+            dstname="${project}_${shortname}_${date}"
+        else
+            date=$(date +%Y-%m)
+            dstname="${project}_${shortname}_${date}"
+        fi
+    fi
+
+    validateDestRepoName "${dstname}"
+
+    srcpath="$(repoPath "${srcname}")"
+    dstpath="$(repoPath "${dstname}")"
+
+    srcDepth=$(countSlashes "${srcpath}")
+    dstDepth=$(countSlashes "${dstpath}")
+    if (( ${dstDepth} == ${srcDepth} )); then
+        opt_submodulePathFix='no'
+    elif (( ${dstDepth} == ${srcDepth} + 1 )); then
+        opt_submodulePathFix='addOne'
+    elif (( ${dstDepth} == ${srcDepth} - 1 )); then
+        opt_submodulePathFix='stripOne'
+    else
+        die 'Logic error: Invalid change in repo path depth.'
+    fi
+
+    if ! callStdhost promote_preflight \
+        "${srcname}" "${srcpath}" "${dstname}" "${dstpath}" "${arg_branch}";
+    then
+        die "Preflight failed."
+    fi
+
+    confirmNotice "
+Will promote:
+
+  - source: '${srcname}' at '${srcpath}'
+  - branch '${arg_branch}'
+  - to: '${dstname}' at '${dstpath}'
+  - maintainer: ${arg_maintainer:-default}
+$(
+    if [ -n "${arg_repo}" ]; then
+        cat <<\EOF
+
+Warning: Will not add forward ref to version.inc.md, because a source repo has
+been specified on the command line.  Prefer running `promote` in a working copy
+of the source repo without specifying the source repo on the command line.
+EOF
+    fi
+)
+" "ok"
+
+    if [ -z "${arg_repo}" ] && [ -e 'version.inc.md' ]; then
+        echo '    EDIT version.inc.md'
+        ret=0
+        addVersionNextRef "${dstname}" || ret=$?
+        case ${ret} in
+        0)
+            echo
+            echo 'version.inc.md updated, publishing to master:'
+            echo
+            "${toolsdir}/bin/publish-to-master"
+            ;;
+        20)
+            echo 'already up-to-date.'
+            ;;
+        *)
+            die "unknown error."
+            ;;
+        esac
+    fi
+
+    if ! callStdhostAsUser "${arg_maintainer}" \
+        promote "${srcname}" "${srcpath}" "${dstname}" "${dstpath}" "${arg_branch}";
+    then
+        die "Failed to init remote repository."
+    fi
+
+    echo
+    echo "Successfully initialized '${dstname}'."
+}
+
+addVersionNextRef() {
+    local next="$1"
+    local vmd='version.inc.md'
+
+    if ! [ -e "${vmd}" ]; then
+        die "Missing ${vmd}."
+    fi
+
+    if ! grep -q '^Next generations:' "${vmd}"; then
+        sed -e '/^\[^version\]: .*@@VERSION@@ of repo/ a \
+Next generations: none.' -- "${vmd}" >"${vmd}.tmp"
+        mv "${vmd}.tmp" "${vmd}"
+    fi
+    if ! grep -q '^Next generations:' "${vmd}"; then
+        die "Failed to insert 'Next generations:' in \`${vmd}\`."
+    fi
+
+    if ! grep -q "^Next generations:.*${next}" "${vmd}"; then
+        sed -e "s/^Next generations:/Next generations: \`${next}\`,/" \
+            -- "${vmd}" >"${vmd}.tmp"
+        mv "${vmd}.tmp" "${vmd}"
+    fi
+    if ! grep -q "^Next generations:.*${next}" "${vmd}"; then
+        die "Failed to insert '${next}' in \`${vmd}\`."
+    fi
+
+    if [ -z "$(git diff -- "${vmd}")" ]; then
+        return 20
+    fi
+
+    git commit -m "promote: Add forward ref to \`${next}\`" -- "${vmd}" || true
+}
+
+argparse() {
+    pubref=HEAD
+    opt_yes=
+    opt_year=
+    opt_timeless=
+    opt_verify_tagged=t
+    arg_maintainer="$(cfg_defaultmaintainerid)"
+    arg_to=
+    arg_repo=
+    arg_branch=master
+    while [ $# -ge 1 ]
+    do
+        case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -y|--yes)
+            opt_yes=t
+            ;;
+        --verify-tagged)
+            opt_verify_tagged=t
+            ;;
+        --no-verify-tagged)
+            opt_verify_tagged=
+            ;;
+        --maintainer)
+            shift
+            [ $# -ge 1 ] ||
+                die "--maintainer requires an argument."
+            arg_maintainer="$1"
+            ;;
+        --branch)
+            shift
+            [ $# -ge 1 ] ||
+                die "--branch requires an argument."
+            arg_branch="$1"
+            ;;
+        --year)
+            opt_year=t
+            ;;
+        --timeless)
+            opt_timeless=t
+            ;;
+        --to)
+            shift
+            [ $# -ge 1 ] ||
+                die "--to requires an argument."
+            isValidDate "$1" || isValidRepoFullname "$1" ||
+                die "invalid --to argument (expected valid date or fullname)."
+            arg_to="$1"
+            ;;
+        -*)
+            die "Unknown option $1"
+            ;;
+        *)
+            break
+            ;;
+        esac
+        shift
+    done
+    if (( $# == 1 )); then
+        isValidRepoFullname "$1" ||
+            die "invalid <repo> (expected fullname)."
+        arg_repo="$1"
+        shift
+    fi
+    (( $# == 0 )) ||
+        die "Invalid number of arguments."
+}
+
+validateDestRepoName() {
+    local shortname project date year month
+    read shortname project date year month <<<"$(parseRepoName "$1")"
+
+    if [ -z "${date}" ]; then
+        test ${opt_timeless} && return 0
+        die "Invalid destination date; empty date requires --timeless."
+    fi
+
+    case ${date} in
+    *-*)
+        true  # ok without opt_year.
+        ;;
+    *)
+        test ${opt_year} ||
+            die "Invalid destination date (expected <year>-<month>; got only <year>).  Pass option --year to allow year-only dates."
+        year=${date}
+        ;;
+    esac
+
+    case ${year} in
+    ${stdtoolsYear})
+        # ok
+        ;;
+    *)
+        die "Invalid destination date (expected year ${stdtoolsYear}; got ${year})."
+        ;;
+    esac
+}
+
+main "$@"

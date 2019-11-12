@@ -1,0 +1,173 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+export LC_ALL=C
+
+main() {
+    srcname="$1"
+    srcpath="$2"
+    dstname="$3"
+    dstpath="$4"
+    branch="$5"
+
+    superdir="$(dirname "${dstpath}")"
+    subdir="$(basename "${dstpath}")"
+
+    checkSource
+
+    cd "${superdir}"
+    (
+        stdlock 10
+        cloneToDest
+    ) 10<"$(stdlockdir)"
+
+    exitok
+}
+
+# Full `checkSource` in `call/promote_preflight` and subset in `call/promote`.
+checkSource() {
+    cd "${srcpath}"
+
+    prefix="$(git rev-parse --show-prefix)" ||
+        die "'${srcpath}' is not a git working copy."
+
+    [ -z "${prefix}" ] ||
+        die "'${srcpath}' is not the root of a git working copy."
+
+    if test ${opt_verify_tagged}; then
+        if ! isTagged; then
+            die "Error: branch '${branch}' in '${srcpath}' does not point to tag."
+        fi
+    fi
+}
+
+isTagged() {
+    isTaggedCommit "${branch}" ||
+    ( isReleaseCommit "${branch}" && isTaggedCommit "${branch}^" ) ||
+    ( isClosingCommit "${branch}" && isTaggedCommit "${branch}^" ) ||
+    ( isClosingCommit "${branch}" && isReleaseCommit "${branch}~1" && isTaggedCommit "${branch}~2" )
+}
+
+isClosingCommit() {
+    [ "$(git diff-tree $1^..$1 --name-only)" = 'version.inc.md' ]
+}
+
+cloneToDest() {
+    [ -e "${dstpath}" ] &&
+        die "'${dstpath}' already exists."
+
+    [ -e "${superdir}/.gitmodules" ] ||
+        die " Missing '${superdir}/.gitmodules' (expected git repo with submodules at '${superdir}').
+If '${superdir}' is a yearly folder, see 'stdtools init-year -h' to create it.
+If '${superdir}' is a project folder, see 'stdtools init-project -h' to create it.
+"
+
+    # Use shared permissions if dir has setgid.
+    opt_shared=
+    if [ -g "${superdir}" ]; then
+        echo "Using shared permissions."
+        opt_shared=--shared
+    fi
+
+    mkdir "${dstpath}"
+
+    cd "${srcpath}"
+    useLfs=
+    if isActiveLfs; then
+        useLfs=t
+    fi
+
+    cd "${dstpath}"
+    git init ${opt_shared}
+    git config receive.denyNonFastForwards false
+
+    if test ${useLfs}; then
+        mkdir "$(git rev-parse --git-path 'lfs')"
+        mkdir "$(git rev-parse --git-path 'lfs/objects')"
+        mkdir "$(git rev-parse --git-path 'lfs/tmp')"
+        git lfs-x fsck --fix-perms
+    fi
+
+    gitNoLfsSmudge pull "${srcpath}" ${branch}
+
+    if test ${useLfs}; then
+        git config --add lfs.weakalternate "${srcpath}"
+        git lfs-x link -- .
+    fi
+
+    if [ -e 'version.inc.md' ]; then
+        sed -i -e "s/^Next generations: \`${dstname}\`,/Next generations:/" version.inc.md
+        sed -i -e "s/^Previous generations:/Previous generations: \`${srcname}\`,/" version.inc.md
+        git commit -m "promote to ${dstname}: Add backref to \`${srcname}\`" -- version.inc.md || true
+    fi
+
+    if [ -e '.gitmodules' ]; then
+        case ${opt_submodulePathFix} in
+        no)
+            ;;
+        addOne)
+            echo '    FIX relative submodule urls'
+            sed -i -e 's@url = \.\./\.\./@url = ../../../@' .gitmodules
+            git add -u .gitmodules
+            git commit -m "promote to ${dstname}: Fix submodule urls during promote to time-based"
+            ;;
+        stripOne)
+            echo '    FIX relative submodule urls'
+            sed -i -e 's@url = \.\./\.\./\.\./@url = ../../@' .gitmodules
+            git add -u .gitmodules
+            git commit -m "promote to ${dstname}: Fix submodule urls during promote to timeless"
+            ;;
+        *)
+            die 'Logic error: invalid opt_submodulePathFix.'
+            ;;
+        esac
+    fi
+
+    # Pull subrepos.  `git config ... --get-regex` selects submodules with local
+    # paths, i.e. paths that start with `./`.
+    if [ -e .gitmodules ]; then
+        while read key url; do
+            [ -z "${key}" ] && continue
+
+            IFS=. read _ name _ <<<"${key}"
+            path="$(git config -f .gitmodules submodule.${name}.path)"
+            if [ -d "${path}" ]; then
+                (
+                    useLfs='' &&
+                    pushd "${srcpath}/${url}" >/dev/null &&
+                    if isActiveLfs; then
+                        useLfs=t
+                    fi &&
+                    popd >/dev/null &&
+                    cd "${path}" &&
+                    git init ${opt_shared} &&
+                    git config receive.denyNonFastForwards false &&
+                    if test ${useLfs}; then
+                        mkdir "$(git rev-parse --git-path 'lfs')"
+                        mkdir "$(git rev-parse --git-path 'lfs/objects')"
+                        mkdir "$(git rev-parse --git-path 'lfs/tmp')"
+                        git lfs-x fsck --fix-perms
+                    fi
+                    gitNoLfsSmudge pull "${srcpath}/${url}" master &&
+                    if test ${useLfs}; then
+                        git config --add lfs.weakalternate "${srcpath}/${url}"
+                        git lfs-x link -- .
+                    fi
+                ) && git submodule init -- "${path}" ||
+                    die "failed to initialize submodule '${name}'."
+            else
+                echo "Skipping missing submodule dir '${path}'."
+            fi
+        done <<<"$(git config -f .gitmodules --get-regex '^submodule[.][^.]+[.]url$' '^[.]/')"
+    fi
+
+    cd "${superdir}"
+    if [ -n "${opt_shared}" ]; then
+        umask 0007
+    fi
+    git submodule add "./${subdir}"
+    git commit -m "promote to ${dstname}: Add submodule '${subdir}' (promoted from '${srcname}')"
+}
+
+main "$@"

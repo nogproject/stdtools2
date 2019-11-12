@@ -37,6 +37,7 @@ _stdtools2() {
             init-toolsconfig
             init-year
             life
+            promote
             publish-intern
             publish-merge-to-master
             publish-to-master
@@ -196,6 +197,22 @@ _stdtools2() {
             COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
             return 0
         fi
+        ;;
+    promote)
+        case "${cur}" in
+        -*)
+            local opts='
+                -h --help
+                -y --yes
+                --verify-tagged --no-verify-tagged
+                --maintainer
+                --year --timeless --to
+                --branch
+            '
+            COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+            return 0
+            ;;
+        esac
         ;;
     publish-intern)
         case "${cur}" in
