@@ -1,0 +1,101 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+toolsdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)
+source "${toolsdir}/lib/lib.sh"
+
+usage() {
+    cat <<\EOF
+Usage:
+  gc-repo [-a|--aggressive] [-f|--force] [--lfs-dry-run-trace] [<repo>]
+
+Options:
+  -a|--aggressive
+      Enable more aggressiv garbage collection.  Nonessential branches (that is
+      branches other than `maint`, `master`, and `master-*`) will be removed.
+      Silo objects will be kept only for the tip of the branches but not for
+      intermediate commits and tags.  LFS objects will be kept only for master,
+      instead of for the last 6 months.
+  -f|--force
+      Disable some safety checks and apply actions nonetheless.  A run without
+      '--force' is considered safe at any time.
+  --lfs-dry-run-trace
+      Run LFS prune in dry-run mode with trace logging.  This flag may be
+      useful to analyze in detail which LFS files would be removed until we are
+      confident that the implementation works as expected.
+
+`stdtools gc-repo` runs garbage collection in `<repo>`; the default is the
+current repo.
+EOF
+    exit 1
+}
+
+main() {
+    argparse "$@"
+
+    if [ -z "${arg_name}" ] || [ "${arg_name}" = '.' ]; then
+        fullname="$(getRepoCommonName2)"
+        if ! isValidRepoFullname "${fullname}"; then
+            die "Failed to determine repo name for current directory."
+        fi
+    else
+        validateRepoName "${arg_name}"
+        fullname="${arg_name}"
+    fi
+
+    checkRemoteNotDeinit "${fullname}"
+
+    path="$(repoPath "${fullname}")"
+
+    if ! callStdhost gc-repo "${path}"; then
+        die "Failed to run remote cmd gc."
+    fi
+}
+
+argparse() {
+    opt_agressive=
+    opt_force=
+    arg_name=
+    opt_lfs_dry_run_trace=
+    while [ $# -ge 1 ]
+    do
+        case "$1" in
+        -h|--help)
+            usage
+            ;;
+        -a|--aggressive)
+            opt_agressive=t
+            ;;
+        -f|--force)
+            opt_force=t
+            ;;
+        --lfs-dry-run-trace)
+            opt_lfs_dry_run_trace=t
+            ;;
+        -v|--verbose)
+            opt_verbose=t
+            ;;
+        -*)
+            die "unknown option $1"
+            ;;
+        *)
+            break
+            ;;
+        esac
+        shift
+    done
+
+    case $# in
+    0)
+        ;;
+    1)
+        arg_name="$1"
+        ;;
+    *)
+        die "Wrong number of arguments."
+        ;;
+    esac
+}
+
+main "$@"

@@ -1,0 +1,140 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+export LC_ALL=C
+
+main() {
+    path=$1
+
+    cd "${path}"
+    (
+        stdlock 10
+        gc
+    ) 10<"$(stdlockdir)"
+
+    exitok
+}
+
+gc() {
+    printf "Checking status '%s'\n" "$(pwd)"
+
+    isTopLevelDir ||
+        die "Not a toplevel git worktree '$(pwd)'."
+
+    if [ -n "$(git status -s)" ]; then
+        git status
+        die "git status not clean."
+    fi
+
+    if isActive; then
+        if test ${opt_agressive} && ! test ${opt_force}; then
+            die "refusing aggressive gc on active repo; you may use --force."
+        fi
+    else
+        if ! test ${opt_agressive}; then
+            echo 'Note: the repo is inactive; consider --aggressive.'
+        fi
+    fi
+
+    git_gc_opts=
+    if test ${opt_agressive}; then
+        git_gc_opts='--aggressive'
+    fi
+
+    ( echo '.' && lsActiveSubmodulesRecursive ) \
+    | while IFS= read -r p; do
+        (
+            cd "${p}" &&
+            printf "Entered '%s'\n" "$(pwd)" &&
+            verifyOnMaster &&
+            reportOther &&
+            if test ${opt_agressive}; then
+                gcBranches
+            fi &&
+            run git gc ${git_gc_opts} &&
+            if hasLfsObjects; then
+                gcLfs
+            fi
+        ) || die "Failed to gc in '${p}'."
+    done
+}
+
+verifyOnMaster() {
+    [ "$(git symbolic-ref HEAD)" = "refs/heads/master" ] ||
+        die "not on branch 'master'."
+}
+
+reportOther() {
+    [ -z "$(git ls-files --other)" ] && return
+    printf 'Warning: there are %d other files not tracked in git.\n' $(git ls-files --other | wc -l)
+}
+
+gcBranches() {
+    local ergxEssentialBranches='^(maint|master|master-[^/]*|public)$'
+
+    if test ${opt_force}; then
+        git branch | cut -b 3- |
+        ( egrep -v "${ergxEssentialBranches}" || true )
+    else
+        git branch --list '*/*' | cut -b 3-
+    fi |
+    while IFS= read -r b; do
+        git branch -d "${b}"
+    done
+
+    if git branch | cut -b 3- | egrep -v "${ergxEssentialBranches}" |
+        sed -e 's/^/Unexpected branch: /'; then
+        die "Refused to delete unexpected branches without --force."
+    fi
+}
+
+gcLfs() {
+    if test ${opt_agressive}; then
+        if test ${opt_lfs_dry_run_trace}; then
+            echo 'would git lfs prune until master; trace log follows:'
+            echo >&2 '-----BEGIN TRACE LOG-----'
+            GIT_TRACE=1 git lfs-x prune --dry-run \
+                --boundary=refs/heads/master --retain-days=1
+            echo >&2 '-----END TRACE LOG-----'
+        else
+            echo 'git lfs prune until master'
+            git lfs-x prune --boundary=refs/heads/master --retain-days=1
+        fi
+    else
+        boundary=$(
+            git rev-list \
+                -n 1 --until='200 days ago' --date-order \
+                refs/heads/master
+        )
+        if [ -z "${boundary}" ]; then
+            echo 'skipped git lfs prune: no master commit older than 200 days.'
+            return
+        fi
+        if test ${opt_lfs_dry_run_trace}; then
+            echo 'would git lfs prune until 200 days ago; trace log follows:'
+            echo >&2 '-----BEGIN TRACE LOG-----'
+            GIT_TRACE=1 git lfs-x prune --dry-run \
+                --boundary="${boundary}" --retain-days=200
+            echo >&2 '-----END TRACE LOG-----'
+        else
+            echo 'git lfs prune until 200 days ago'
+            git lfs-x prune --boundary="${boundary}" --retain-days=200
+        fi
+    fi
+}
+
+run() {
+    printf '%s\n' "$*"
+    "$@"
+}
+
+isActive() {
+    files='README.md index.md version.inc.md'
+    for rgx in '^THIS.*RETIRED' '^THIS.*FROZEN'; do
+        git grep -q "${rgx}" HEAD -- ${files} 2>/dev/null && return 1
+    done
+    true
+}
+
+main "$@"

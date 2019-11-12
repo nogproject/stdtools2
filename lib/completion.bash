@@ -29,6 +29,7 @@ _stdtools2() {
             clone
             clone-subrepo
             doctor
+            gc-repo
             html-to-pdf
             init-hooks
             init-project
@@ -101,6 +102,20 @@ _stdtools2() {
             local opts='
                 -h --help
                 --fix
+            '
+            COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+            return 0
+            ;;
+        esac
+        ;;
+    gc-repo)
+        case "${cur}" in
+        -*)
+            local opts='
+                -h --help
+                -a --aggressive
+                -f --force
+                --lfs-dry-run-trace
             '
             COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
             return 0
