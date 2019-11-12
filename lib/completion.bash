@@ -33,12 +33,14 @@ _stdtools2() {
             html-to-pdf
             init-hooks
             init-project
+            init-releases
             init-toolsconfig
             init-year
             publish-intern
             publish-merge-to-master
             publish-to-master
             pull
+            release
             show
         '
         COMPREPLY=( $(compgen -W "${cmds}" -- ${cur}) )
@@ -146,6 +148,17 @@ _stdtools2() {
             ;;
         esac
         ;;
+    init-releases)
+        case "${cur}" in
+        -*)
+            local opts='
+                -h --help
+            '
+            COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+            return 0
+            ;;
+        esac
+        ;;
     init-toolsconfig)
         case "${cur}" in
         -*)
@@ -208,6 +221,32 @@ _stdtools2() {
                 --no-master-check
                 --no-recurse-submodules-check
                 --skip-additional
+            '
+            COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+            return 0
+            ;;
+        esac
+        ;;
+    pull)
+        case "${cur}" in
+        -*)
+            local opts='
+                -h --help
+            '
+            COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+            return 0
+            ;;
+        esac
+        ;;
+    release)
+        case "${cur}" in
+        -*)
+            local opts='
+                -h --help
+                -f --force
+                --pack --no-pack
+                -m
+                -y --yes
             '
             COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
             return 0
