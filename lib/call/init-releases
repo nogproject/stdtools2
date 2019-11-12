@@ -49,7 +49,7 @@ Use Git for HTML and dot files.
 # Hide git from http.
 RedirectMatch 404 .*/[.]git
 
-# Grant access without password (to visual.zib.de from outside ZIB).
+# Grant access without password from world.
 allow from all
 satisfy any
 
