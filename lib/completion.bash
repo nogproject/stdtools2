@@ -43,6 +43,7 @@ _stdtools2() {
             publish-to-master
             pull
             release
+            search
             shell
             show
         '
@@ -277,6 +278,17 @@ _stdtools2() {
                 --pack --no-pack
                 -m
                 -y --yes
+            '
+            COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+            return 0
+            ;;
+        esac
+        ;;
+    search)
+        case "${cur}" in
+        -*)
+            local opts='
+                -h --help
             '
             COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
             return 0
