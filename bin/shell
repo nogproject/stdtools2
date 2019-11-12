@@ -1,0 +1,143 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+toolsdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)
+source "${toolsdir}/lib/lib.sh"
+
+usage() {
+    cat <<\EOF
+Usage:
+  shell [--maintainer] [-u <user>] [<location>]
+
+Options:
+  --maintainer  Connect as the location owner.
+  -u <user>, --user <user>    Connect as specified user.
+
+`stdtools shell` opens a remote shell on the host specified in Git config
+`stdtools.stdhost`.  `<location>` can be a repo name, a project directory, or a
+project/year directory.  '.' means the stdrepo in the current directory.  No
+location means Git config `stdtools.stdhostprojects`.  See examples below.
+
+Examples:
+
+```
+stdtools shell
+stdtools shell foo
+stdtools shell foo/2019
+stdtools shell foo_stdtools_2019
+stdtools shell foo_bar-stuff
+stdtools shell .
+```
+EOF
+    exit 1
+}
+
+main() {
+    argparse "$@"
+    case ${arg_location} in
+    *_*|*_*_*)
+        validateRepoName "${arg_location}"
+        path="$(repoPath "${arg_location}")"
+        ;;
+    .)
+        repo="$(getRepoCommonName2)"
+        if ! isValidRepoFullname "${repo}"; then
+            die "Failed to determine repo name for current directory."
+        fi
+        path="$(repoPath "${repo}")"
+        ;;
+    *)
+        projects="$(cfg_projects)"
+        path="${projects}/${arg_location}"
+        ;;
+    esac
+
+    if [ -n "${arg_user}" ]; then
+        user="${arg_user}"
+    elif test ${opt_maintainer}; then
+        if ! user=$(callStdhost get-owner "${path}"); then
+            die "Failed to determine remote owner of \`${path}\`."
+        fi
+    else
+        user=
+    fi
+
+    stdhost=$(cfg_stdhost)
+    if [ -n "${user}" ]; then
+        conn="${user}@${stdhost}"
+        echo "Connecting to ${conn}:${path}."
+        manageKeys ${conn}
+    else
+        conn="${stdhost}"
+        echo "Connecting to ${stdhost}:${path}."
+    fi
+
+    # Start bash with in an fresh home directory that contains the stdtools
+    # environment.
+    shellhome="/tmp/stdtools-shell_$(id -un)_$(date -u +%y%m%dT%H%M%SZ)"
+    stdhostPath="$(cfg_stdhostPath)"
+    (
+        genprgSameGitAuthorAtRemote
+        if [ -n "${user}" ]; then
+            genprgSameGitCommitterAsUser "${user}"
+        else
+            genprgSameGitCommitter
+        fi
+        echo "STD_REMOTE_USER=$(id -un)"
+        echo "STDHOSTPATH=$(printf %q "${stdhostPath}")"
+        tr -d '\r' <"${toolsdir}/lib/shell/bashrc"
+        cat <<EOF
+echo 'Sourced environment from ${shellhome}/bashrc'
+cd '${path}'
+EOF
+    ) | exec_ssh "${conn}" "
+        mkdir -m 0700 ${shellhome} && cat >${shellhome}/bashrc && exit ${cfg_exit_ok}
+    "
+
+    exec_ssh -t "${conn}" \
+        env HOME=${shellhome} \
+        bash --rcfile ${shellhome}/bashrc -i
+}
+
+argparse() {
+    arg_location=
+    opt_maintainer=
+    arg_user=
+    while [ $# -ge 1 ]
+    do
+        case "$1" in
+        -h|--help)
+            usage
+            ;;
+        --maintainer)
+            opt_maintainer=t
+            ;;
+        -u|--user)
+            shift
+            [ $# -ge 1 ] || die "--user requires argument."
+            arg_user="$1"
+            ;;
+        -*)
+            die "unknown option $1"
+            ;;
+        *)
+            break
+            ;;
+        esac
+        shift
+    done
+
+    case $# in
+    0)
+        ;;
+    1)
+        arg_location="$1"
+        ;;
+    *)
+        die "Wrong number of arguments."
+        ;;
+    esac
+}
+
+main "$@"

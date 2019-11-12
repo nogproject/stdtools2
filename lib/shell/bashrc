@@ -1,0 +1,141 @@
+cat <<\EOF
+
+*******************************************************************************
+This is a stdtools shell.  See stdtools2 for details.
+*******************************************************************************
+
+EOF
+
+export HOME="$(dirname "${BASH_SOURCE[0]}")"
+export PATH=${STDHOSTPATH}:$PATH
+
+# See <http://perlgeek.de/en/article/set-up-a-clean-utf8-environment>
+export LC_ALL=en_US.UTF-8
+export LANG=en_US.UTF-8
+export LANGUAGE=en_US.UTF-8
+
+# Write Git config to ensure proper Git LFS setup.
+cat >"${HOME}/.gitconfig" <<\EOF
+[filter "lfs"]
+	clean = git-lfs clean -- %f
+	smudge = git-lfs smudge --skip -- %f
+	process = git-lfs filter-process --skip
+	required = true
+EOF
+
+# `rc-spr` switches to spr's preferences, activated by default if the remote
+# user is bzfproha.
+rc-spr() {
+    echo "Using spr's preferences: readline vi mode, vim"
+    cat <<\EOF >"${HOME}/.inputrc"
+# Make <C-p> <C-n> behave like vim command mode, i.e. show only entries that
+# match prefix.
+set keymap vi-command
+"\C-p": history-search-backward
+"\C-n": history-search-forward
+
+set keymap vi-insert
+"\C-p": history-search-backward
+"\C-n": history-search-forward
+"\C-a": beginning-of-line
+"\C-e": end-of-line
+"\C-t": transpose-chars
+"\C-b": backward-char
+"\C-d": delete-char
+"\C-f": forward-char
+EOF
+    export EDITOR=vim
+    export VISUAL=vim
+    exec bash -o vi
+}
+
+echo 'To switch preferences: rc-spr'
+
+# Don't put duplicate lines or lines starting with space in the history.
+HISTCONTROL=ignoreboth
+
+# Disable history expansion, it seems safer to disable special meanig of `!$`
+# and such.
+set +o histexpand
+
+# check the window size after each command and, if necessary,
+# update the values of LINES and COLUMNS.
+shopt -s checkwinsize
+
+# make less more friendly for non-text input files, see lesspipe(1)
+[ -x /usr/bin/lesspipe ] && eval "$(SHELL=/bin/sh lesspipe)"
+
+alias ls='ls --color=auto'
+shopt -s globstar
+
+# Everything, long with type marks.
+alias ll='ls -alF'
+# Nearly all (no ., ..), with type marks.
+alias la='ls -AF'
+# Multi-column, with type marks.
+alias l='ls -CF'
+# 2 level tree.
+alias treeacl='tree -A -C -L 2'
+
+# cd to physical dir (all symlinks resolved).
+alias cdP='cd "$(pwd -P)"'
+
+alias g='git'
+
+# grep with color, green for matches
+alias grep='grep --color=auto'
+alias egrep='egrep --color=auto'
+export GREP_COLOR='1;35'
+
+# Newline-separated xargs.
+# <http://serverfault.com/questions/127904/newline-separated-xargs>
+alias xxargs="tr '\n' '\0' | xargs -0"
+
+# Eternal history adapted from <https://github.com/startup-class/dotfiles/blob/55a9c7c58acad4220f377cf06a306c3beb3ba5e0/.bashrc>
+ETERNAL_HISTORY="/tmp/stdtools-shell_${USER}_bash-eternal-history"
+( umask 0077 && touch "${ETERNAL_HISTORY}" && chmod u=rw "${ETERNAL_HISTORY}" )
+echo "A full command history is kept in ${ETERNAL_HISTORY}"
+
+if [ "${PROMPT_COMMAND/bash_eternal_history/}" = "${PROMPT_COMMAND}" ]; then
+    PROMPT_COMMAND="${PROMPT_COMMAND}"'
+    printf "%s\t%s\t%s\t%s\t%s\t%s\n" \
+        "$(date +%Y-%m-%dT%T)" "$USER" "$HOSTNAME" $$ "$PWD" "$(history 1)" \
+        >> "${ETERNAL_HISTORY}"
+    '
+fi
+
+# Use awk for unsorted uniq, see
+# <http://www.commandlinefu.com/commands/view/256/uniq-for-unsorted-data>.
+# Use tac to keep the last unique entry instead of the first one.
+histgrep() {
+    local first=$1
+    shift
+    local rgx="${first}$(if [ $# -gt 0 ]; then printf '.*%s' "$@" ; fi)"
+    egrep -e "${rgx}" "${ETERNAL_HISTORY}" \
+    | cut -d $'\t' -f 6 | cut -b 8- \
+    | grep -v '^hgrep' | grep -v '^histgrep' \
+    | tac | awk '!_[$0]++' | tac \
+    | egrep --color=auto -e "${rgx}"
+}
+
+hgrep() {
+    histgrep "$@"
+}
+
+# Safety
+alias rm='echo stdshell: rm disabled for safety, use /bin/rm if you insist && false'
+alias stdtools='echo stdshell: stdtools disabled, run it in your shell in a working copy && false'
+alias s='stdtools'
+
+PS1=\
+$'
+--------- stdtools shell$(
+if [ "${USER}" != "${STD_REMOTE_USER}" ]; then
+    printf ", YOU ARE %s" "${USER} "
+else
+    printf " "
+fi
+)--------
+\w
+$(date +%FT%T)
+\u@\h\$ '

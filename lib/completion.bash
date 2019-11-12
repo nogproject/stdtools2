@@ -42,6 +42,7 @@ _stdtools2() {
             publish-to-master
             pull
             release
+            shell
             show
         '
         COMPREPLY=( $(compgen -W "${cmds}" -- ${cur}) )
@@ -259,6 +260,19 @@ _stdtools2() {
                 --pack --no-pack
                 -m
                 -y --yes
+            '
+            COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+            return 0
+            ;;
+        esac
+        ;;
+    shell)
+        case "${cur}" in
+        -*)
+            local opts='
+                -h --help
+                --maintainer
+                -u
             '
             COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
             return 0
