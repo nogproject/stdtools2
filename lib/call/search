@@ -225,7 +225,7 @@ find . \
 | while read -r relpath; do
     IFS=/ read -r project year name _ <<<"${relpath}"
     IFS=_ read _ date shortname _ <<<"${name}"
-    printf '%s_%s_%s-%s' "${date}" "${project}" "${shortname}"
+    printf '%s_%s_%s' "${date}" "${project}" "${shortname}"
     printf ' %s/%s\n' "${projects}" "${relpath}"
 done
 
@@ -260,7 +260,7 @@ find . \
     case ${name} in
     _*_*__*)
         IFS=_ read _ month shortname _ <<<"${name}"
-        printf '%s-%s_%s_%s-%s' "${year}" "${month}" "${project}" "${shortname}"
+        printf '%s-%s_%s_%s' "${year}" "${month}" "${project}" "${shortname}"
         ;;
     _*__*)
         IFS=_ read _ shortname _ <<<"${name}"
