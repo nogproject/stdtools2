@@ -224,7 +224,7 @@ find . \
     -false \
 | while read -r relpath; do
     IFS=/ read -r project year name _ <<<"${relpath}"
-    IFS=_ read _ data shortname _ <<<"${name}"
+    IFS=_ read _ date shortname _ <<<"${name}"
     printf '%s_%s_%s-%s' "${date}" "${project}" "${shortname}"
     printf ' %s/%s\n' "${projects}" "${relpath}"
 done
