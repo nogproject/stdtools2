@@ -152,6 +152,10 @@ hasLfsStore() {
 commitSuper() {
     if git submodule status -- "$(basename ${masterpath})" | grep -q '^+'; then
         echo "    COMMIT super"
+
+        # Avoid permission denied if file owned by a different user.
+        rm -f '.git/COMMIT_EDITMSG' || true
+
         git commit -m "${fullname}: merge to master" \
             -- "$(basename ${masterpath})"
     else
