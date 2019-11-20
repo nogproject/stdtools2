@@ -1270,7 +1270,7 @@ manageKeys() {
         local keyfile="${HOME}/.ssh/${keyname}"
         if [ -e "${keyfile}" ]; then
             local lifetime=3600
-            echo "Adding ssh key ${keyname}..."
+            echo "Adding ssh key ${keyname}..." >&2
             ssh-add -t ${lifetime} "${keyfile}"
         else
             echo
