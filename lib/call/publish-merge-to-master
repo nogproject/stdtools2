@@ -20,20 +20,63 @@ main() {
         else
             updateLfs
         fi
-
-        # Commit in parent dir if it contains a git repo and the submodule has
-        # changed.
-        cd "$(dirname ${masterpath})"
-        if ! [ "$(git rev-parse --is-inside-work-tree 2>/dev/null)" = "true" ]; then
-            echo "    SKIP commit super: not a git working copy"
-        elif !  [ -f "$(git rev-parse --show-toplevel)/.gitmodules" ]; then
-            echo "    SKIP commit super: missing .gitmodules"
-        else
-            ( stdlock 11 && commitSuper ) 11<"$(stdlockdir)"
-        fi
+        commitSuper
     ) 10<"$(stdlockdir)"
 
     exitok
+}
+
+# Commit parent dir if it contains a Git repo and the submodule has changed.
+commitSuper() {
+    sub="$(basename "$(pwd)")"
+    cd '..'
+    if ! [ "$(git rev-parse --is-inside-work-tree 2>/dev/null)" = "true" ]; then
+        echo "    SKIP commit super: not a git working copy"
+    elif !  [ -f "$(git rev-parse --show-toplevel)/.gitmodules" ]; then
+        echo "    SKIP commit super: missing .gitmodules"
+    elif ! [ -w "$(git rev-parse --git-dir)" ]; then
+        echo "    SKIP commit super: cannot write to Git dir."
+    else
+        (
+            stdlock 11
+            if ! git submodule status -- "${sub}" | grep -q '^+'; then
+                echo "    SKIP commit super: submodule unchanged"
+            else
+                echo "    COMMIT super"
+                # Avoid permission denied if file owned by a different user.
+                rm -f '.git/COMMIT_EDITMSG' || true
+                git commit -m "${fullname}: merge to master" -- "${sub}"
+
+                commitSuper2
+            fi
+        ) 11<"$(stdlockdir)"
+    fi
+}
+
+# Super might be a year repo.  If so also commit in the parent project repo.
+commitSuper2() {
+    cd "$(git rev-parse --show-toplevel)"
+    sub2="$(basename "$(pwd)")"
+    cd '..'
+    if ! [ "$(git rev-parse --is-inside-work-tree 2>/dev/null)" = "true" ]; then
+        echo "    SKIP commit super super: not a git working copy"
+    elif !  [ -f "$(git rev-parse --show-toplevel)/.gitmodules" ]; then
+        echo "    SKIP commit super super: missing .gitmodules"
+    elif ! [ -w "$(git rev-parse --git-dir)" ]; then
+        echo "    SKIP commit super super: cannot write to Git dir."
+    else
+        (
+            stdlock 12
+            if ! git submodule status -- "${sub2}" | grep -q '^+'; then
+                echo "    SKIP commit super super: submodule unchanged"
+            else
+                echo "    COMMIT super super"
+                # Avoid permission denied if file owned by a different user.
+                rm -f '.git/COMMIT_EDITMSG' || true
+                git commit -m "${fullname}: merge to master" -- "${sub2}"
+            fi
+        ) 12<"$(stdlockdir)"
+    fi
 }
 
 mergeRepo() {
@@ -147,20 +190,6 @@ EOF
 
 hasLfsStore() {
     [ -d "$(git rev-parse --git-path 'lfs')" ]
-}
-
-commitSuper() {
-    if git submodule status -- "$(basename ${masterpath})" | grep -q '^+'; then
-        echo "    COMMIT super"
-
-        # Avoid permission denied if file owned by a different user.
-        rm -f '.git/COMMIT_EDITMSG' || true
-
-        git commit -m "${fullname}: merge to master" \
-            -- "$(basename ${masterpath})"
-    else
-        echo "    COMMIT super: nothing to do"
-    fi
 }
 
 main "$@"
