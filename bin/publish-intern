@@ -316,26 +316,6 @@ hasValidLfsSshTransferStandalone() {
     && hasLfsStandaloneTransferUrlPrefixConfig
 }
 
-# `checkLfsNogHooks` warns about potential problems with the hook, hoping that
-# it gives sufficient guidance to users to manually fix problems.  We should
-# consider a more radical approach if it turns out to be confusing in practice.
-# We could maintain a standardized hook `lib/hooks/pre-push` and enforce it for
-# all stdrepos in the same way as we enforce the pre-commit hook.
-checkLfsNogHooks() {
-    local hook
-
-    hook="$(git rev-parse --git-path 'hooks/pre-push')"
-    if ! [ -e "${hook}" ]; then
-        echo "Warning: Missing pre-push hook.  You should run \`git lfs-nog init\` in \`$(pwd)\`."
-        return 0
-    fi
-
-    if ! grep -q 'GIT_LFS_NOG' "${hook}"; then
-        echo "Warning: The pre-push hook does not look like the LFS Nog hook.  You should run \`git lfs-nog init\` in \`$(pwd)\`."
-        return 0
-    fi
-}
-
 # Assume LFS changes if any modified path has a `filter=lfs` attribute,
 # ignoring deleted paths.
 #
