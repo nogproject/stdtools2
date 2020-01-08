@@ -32,8 +32,9 @@ Options:
 
 `stdtools promote` creates a new repo generation and migrates data from the
 previous generation.  It fetches branch `master` from `<repo>` and clones all
-subrepos, that is submodules whose paths start with './'.  Tags are not fetched
-to the new repo.
+subrepos, that is submodules whose paths start with `./`.  Tags are not fetched
+to the new repo.  The new repo generation must be in the year configured in
+`stdtools.currentYear`.
 
 The default is to promote the repo for the current working directory.  Specify
 a `<repo>` fullname to promote a different repo.
@@ -44,6 +45,7 @@ EOF
 
 main() {
     argparse "$@"
+    stdtoolsYear=$(cfg_stdtoolsYear)
 
     if [ -n "${arg_repo}" ]; then
         srcname="${arg_repo}"

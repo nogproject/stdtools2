@@ -1,13 +1,9 @@
 #!/bin/bash
 
-# `stdtoolsYear` is the current stdtools generation, which is used at some
-# places to avoid scattered changes when promoting stdtools to a new year.
-stdtoolsYear=2019
-
 case $(uname) in
 MINGW*)
     cat >&2 <<EOF
-fatal: stdtools ${stdtoolsYear} does not support MSYS Git anymore.  Use Ubuntu on Windows.
+fatal: stdtools does not support MSYS Git anymore.  Use Ubuntu on Windows.
 EOF
     exit 1
     ;;
@@ -95,6 +91,24 @@ activeCiRepos=
 # `opt_global_skip_*` can be used to globally disable LFS code paths.  The
 # mechanism will be incrementally implement over time.
 opt_global_skip_lfs_ssh=
+
+# `cfg_stdtoolsYear()` prints the year in which repos may be created.
+cfg_stdtoolsYear() {
+    local y
+    if ! y=$(git config stdtools.currentYear); then
+        y=$(date +%Y)
+        die "Configure the current year with: git config --global stdtools.currentYear ${y}"
+    fi
+    case ${y} in
+    2019)
+        true
+        ;;
+    *)
+        die "Invalid stdtools.currentYear ${y}."
+        ;;
+    esac
+    printf '%s' "${y}"
+}
 
 cfg_stdhost() {
     local h
@@ -791,7 +805,7 @@ ergxRepoFullname='
     ^(
         201[345] (-(0[1-9]|1[0-2]))? _ [a-zA-Z0-9-]+ _ [a-zA-Z0-9-]+
         |
-        [a-zA-Z0-9-]+ _ [a-zA-Z0-9-]+ _ 201[6-9] (-(0[1-9]|1[0-2]))?
+        [a-zA-Z0-9-]+ _ [a-zA-Z0-9-]+ _ (201[6-9]|202[0-0]) (-(0[1-9]|1[0-2]))?
         |
         [a-zA-Z][a-zA-Z0-9-]* _ [a-zA-Z][a-zA-Z0-9-]*
     )$
@@ -804,6 +818,11 @@ grepRepoFullname() {
 
 isValidRepoFullname() {
     egrep -q "${ergxRepoFullname}" <<<"$1"
+}
+
+isValidDate() {
+    local ergx='^(201[3-9]|202[0-0])(-(0[1-9]|1[0-2]))?$'
+    egrep -q "${ergx}" <<<"$1"
 }
 
 validateProjectName() {

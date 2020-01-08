@@ -147,8 +147,8 @@ Git repo with submodules; use `stdtools init-year` to create a yearly folder.
 The new repo will be added as a submodule.  Shared permissions will be used if
 the `<YEAR>` directory has its setgid bit set.
 
-This version of `clone` supports cloning 2013 to 2019 repos.  Creating new
-repos, however, is limited to 2019.
+This version of `clone` supports cloning of 2013 to 2019 repos.  Creating repos
+is limited to the year in the Git config `stdtools.currentYear`.
 
 Unless `--force` is used, the current working directory must match `<YEAR>`,
 since it is recommended to organize local repositories by year.
@@ -169,7 +169,7 @@ cat <<\EOFTXT
 
 The repo must have shared permissions and contain a file `.gitmodules`.  The
 `<YEAR>` directory itself must have the setgid bit set.  Use the following
-command to create a project subdirectory for 2019:
+command to create a project subdirectory for the current year:
 
     stdtools init-year <project>
 
@@ -282,6 +282,7 @@ EOF
 }
 
 readConfig() {
+    stdtoolsYear=$(cfg_stdtoolsYear)
     cfg_initials=$(git config user.initials) ||
         die "Failed to read user.initials (please set using 'git config --global user.initials')."
 }

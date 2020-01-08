@@ -11,10 +11,11 @@ Usage:
   init-year [-y|--yes] [--maintainerid <uid>] <project>
 
 Options:
-  --maintainerid <uid>  (default: '$(cfg_defaultmaintainerid)')
+  --maintainerid <uid>  (default: \`$(cfg_defaultmaintainerid)\`)
       The owner of the yearly folder.
 
-Init a remote project year folder.
+Init a remote project year folder for the year configured in
+\`stdtools.currentYear\`.
 EOF
 }
 
@@ -22,6 +23,7 @@ main() {
     argparse "$@"
     validateProjectName "${arg_project}"
 
+    stdtoolsYear=$(cfg_stdtoolsYear)
     stdhost="$(cfg_stdhost)"
     projects="$(cfg_projects)"
 
