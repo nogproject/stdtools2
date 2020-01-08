@@ -129,7 +129,7 @@ find . \
         '(' \
             -type d \
             -regextype posix-egrep \
-            -regex '^[.]/[^/]*/(2016|2017|2018|2019)$' \
+            -regex '^[.]/[^/]*/(2016|2017|2018|2019|2020)$' \
             -print \
         ')' \
     ')' \
@@ -277,7 +277,7 @@ find . \
         '(' \
             -type d \
             -regextype posix-egrep \
-            -regex '^[.]/[^/]*/(2016|2017|2018|2019)$' \
+            -regex '^[.]/[^/]*/(2016|2017|2018|2019|2020)$' \
             -print \
         ')' \
     ')' \
@@ -395,7 +395,7 @@ printf '%s\n' "${projectPaths}" \
             '(' \
                 -type d \
                 -regextype posix-egrep \
-                -regex '^[.]/(2016|2017|2018|2019)$' \
+                -regex '^[.]/(2016|2017|2018|2019|2020)$' \
                 -print \
             ')' \
         ')' \
@@ -477,7 +477,7 @@ printf '%s\n' "${projectPaths}" \
             '(' \
                 -type d \
                 -regextype posix-egrep \
-                -regex '^[.]/(2016|2017|2018|2019)$' \
+                -regex '^[.]/(2016|2017|2018|2019|2020)$' \
                 -print \
             ')' \
         ')' \
