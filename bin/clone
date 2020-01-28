@@ -60,7 +60,7 @@ cfg_lfs_dir_extensions='
 usage() {
     cat <<\EOFTXT
 Usage:
-  clone [options] [--subrepos] [--create] [--maintainerid <uid>]
+  clone [options] [--subrepos] [--create] [--maintainer <uid>]
         [--year|--timeless] [--lfs|--no-lfs]
         [--subrepo <stdrepo>/<subrepo> <subrepo-branch> <branch-alias> | <stdrepo>]
 
@@ -76,9 +76,10 @@ Options:
                 directory uses submodules.
     --pndlink|--no-pndlink  [default: yes if tools.pndlink=true; no otherwise]
                 If enabled, create `<PROJECT>_<SHORTNAME>_<DATE>` symlinks.
-    --maintainerid <uid>  [default: git config stdtools.defaultMaintainer]
+    --maintainer <uid>  [default: git config stdtools.defaultMaintainer]
                 Use `<uid>` when connecting via ssh to create remote
                 repository.
+    --maintainerid  Alias for --maintainer
     --year      Allow year-only `<DATE>` during create.  The default is to
                 require a month, since this is what we usually want.
     --timeless  Allow timeless `<PROJECT>_<SHORTNAME>` during creates.
@@ -295,7 +296,7 @@ argparse() {
     opt_create=
     opt_lfs=
     opt_toolsconfig=
-    arg_maintainerid="$(cfg_defaultmaintainerid)"
+    arg_maintainer="$(cfg_defaultmaintainerid)"
     opt_npdlink=
     [ "$(git config tools.npdlink)" = 'true' ] && opt_npdlink=t
     opt_pndlink=
@@ -329,10 +330,10 @@ argparse() {
             opt_toolsconfig=t
             shift
             ;;
-        --maintainerid)
+        --maintainer|--maintainerid)
             shift
-            [ $# -ge 1 ] || die "--maintainerid requires argument."
-            arg_maintainerid="$1"
+            [ $# -ge 1 ] || die "--maintainer requires argument."
+            arg_maintainer="$1"
             shift
             ;;
         --lfs)
@@ -711,16 +712,16 @@ initRemote() {
         echo "    Initializing '$(stdhostSuperdir ${project} "${date}")/$(stdhostSubdir ${shortname} "${date}")'..."
         echo
 
-        printf "The repo will be owned by '%s'; confirm by typing the maintainerid: " "${arg_maintainerid}"
+        printf "The repo will be owned by '%s'; confirm by typing the maintainer: " "${arg_maintainer}"
         read -r ans
-        if ! [ "${ans}" = "${arg_maintainerid}" ]; then
-            die "Failed to confirm maintainerid."
+        if ! [ "${ans}" = "${arg_maintainer}" ]; then
+            die "Failed to confirm maintainer."
         fi
         echo
 
         local superdir=$(stdhostSuperdir ${project} "${date}")
         local subdir="$(stdhostSubdir ${shortname} "${date}")"
-        callStdhostAsUser "${arg_maintainerid}" clone_init-remote \
+        callStdhostAsUser "${arg_maintainer}" clone_init-remote \
             "${cfg_initials}" \
             "${fullname}" "${shortname}" \
             "${superdir}" "${subdir}" \

@@ -78,7 +78,7 @@ _stdtools2() {
                 --create
                 --npdlink --no-npdlink
                 --pndlink --no-pndlink
-                --maintainerid
+                --maintainer
                 --year --timeless
                 --force
                 --lfs --no-lfs
