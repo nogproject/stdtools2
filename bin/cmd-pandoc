@@ -230,7 +230,7 @@ cmdPandoc() {
     #
     # line 1: # <title>
     # line 2: By <authors>.
-    # line 3: Last modified <date>.
+    # line 3: Last modified <date>. | YYYY-MM-DD [<hh:mm>]
     #
     #  - The full stops in line 2 and 3 are optional.
     #  - The byline may start lowercase or uppercase.
@@ -246,6 +246,7 @@ cmdPandoc() {
             -e '1 s/^# /% /' \
             -e '2 s/^[Bb]y (.*[^.])\.?$/% \1/' \
             -e '3 s/^(Last modified .*[^.])\.?$/% \1/' \
+            -e '3 s/^([0-9]{4}-[0-9]{2}-[0-9]{2}( [0-9]{2}:[0-9]{2})?)$/% \1/'
         ;;
     TitlePandoc | TitleUnknown)
         cat
