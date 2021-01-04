@@ -1,0 +1,287 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+toolsdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)
+source "${toolsdir}/lib/lib.sh"
+
+usage() {
+    cat <<\EOF
+Usage:
+  promote-local [-y|--yes] [--year] [--timeless]
+        [--parent <dir>] --to <URI>
+
+Options:
+    --to <URI>
+        The std2 URI of the new repo.
+    --year  [default: no]
+        Allow year-only std2 URI.  The default is to require a month.
+    --timeless [default: no]
+        Allow a timeless std2 URI.
+    --parent <dir>
+        Parent directory of the new repo.
+    -y|--yes  Assume yes to all confirmations.
+
+`stdtools promote-local` creates a new repo generation locally from the repo in
+the current directory.  It fetches branch `master` and clones all subrepos.  A
+subrepo is a submodules whose path starts with `./`.  Tags are not fetched.
+
+The new repo generation must be in the year configured in
+`stdtools.currentYear` unless it is timeless.
+
+Std2 URI examples:
+
+    std2:/local/foohost/barproject/bazrepo               # timeless
+    std2:/local/foohost/barproject/2021/bazrepo          # year
+    std2:/local/foohost/barproject/2021/bazrepo-2021-01  # month
+
+EOF
+}
+
+main() {
+    argparse "$@"
+    stdtoolsYear=$(cfg_stdtoolsYear)
+
+    if test ${opt_timeless}; then
+        if ! isStd2URITimeless "${arg_to}"; then
+            die '--to is not a valid timeless std2 URI.'
+        fi
+    elif test ${opt_year}; then
+        if ! isStd2URIYear "${arg_to}"; then
+            die '--to is not a valid year std2 URI.'
+        fi
+    else
+        if ! isStd2URIMonth "${arg_to}"; then
+            die '--to is not a valid month std2 URI.'
+        fi
+    fi
+
+    if [ -n "${arg_parent}" ]; then
+        parent="${arg_parent}"
+    else
+        parent="${HOME}/${stdtoolsYear}"
+    fi
+    if ! [ -d "${parent}" ]; then
+        die "Parent dir does not exist: ${parent}"
+    fi
+
+    srcname="$(getRepoCommonName2)"
+    if ! isValidRepoFullname "${srcname}"; then
+        die "Failed to determine <repo> from current directory."
+    fi
+    srcpath="$(pwd)"
+
+    dstname=$(fullnameFromStd2URI "${arg_to}")
+    dstpath="${parent}/${dstname}"
+    if [ -e "${dstpath}" ]; then
+        die "--to already exists: ${dstpath}"
+    fi
+
+    branch='HEAD'
+
+    confirmNotice "
+Will promote:
+
+  - branch: ${branch}
+  - source name: ${srcname}
+  - source path: ${srcpath}
+  - destination name: ${dstname}
+  - destination path: ${dstpath}
+  - destination URI: ${arg_to}
+" "ok"
+
+    if [ -e 'version.inc.md' ]; then
+        echo '    EDIT version.inc.md'
+        ret=0
+        addVersionNextRef "${dstname}" || ret=$?
+        case ${ret} in
+        0)
+            echo
+            echo 'version.inc.md updated.'
+            echo
+            ;;
+        20)
+            echo 'already up-to-date.'
+            ;;
+        *)
+            die "unknown error."
+            ;;
+        esac
+    fi
+
+    echo "    CLONE ${dstpath}"
+    useLfs=
+    if isActiveLfs; then
+        useLfs=t
+    fi
+
+    mkdir "${dstpath}"
+    cd "${dstpath}"
+    git init
+
+    if test ${useLfs}; then
+        git lfs-x init
+    fi
+
+    gitNoLfsSmudge pull --ff-only "${srcpath}" "${branch}"
+    git gc
+
+    if test ${useLfs}; then
+        git config --add lfs.weakalternate "${srcpath}"
+        git lfs-x link -- .
+        git lfs-x fsck --fix
+    fi
+
+    if [ -e 'version.inc.md' ]; then
+        echo '    EDIT version.inc.md'
+        addVersionBackref "${srcname}" "${dstname}"
+    fi
+
+    # Pull subrepos.  `git config ... --get-regex` selects submodules with
+    # local paths, i.e. paths that start with `./`.
+    if [ -e .gitmodules ]; then
+        while read key url; do
+            [ -z "${key}" ] && continue
+            IFS=. read _ name _ <<<"${key}"
+            path="$(git config -f .gitmodules submodule.${name}.path)"
+            if [ -d "${path}" ]; then
+                (
+                    useLfs='' &&
+                    pushd "${srcpath}/${url}" >/dev/null &&
+                    if isActiveLfs; then
+                        useLfs=t
+                    fi &&
+                    popd >/dev/null &&
+                    cd "${path}" &&
+                    git init &&
+                    if test ${useLfs}; then
+                        git lfs-x init
+                    fi
+                    gitNoLfsSmudge pull --ff-only "${srcpath}/${url}" master &&
+                    git gc &&
+                    if test ${useLfs}; then
+                        git config --add lfs.weakalternate "${srcpath}/${url}" &&
+                        git lfs-x link -- . &&
+                        git lfs-x fsck --fix
+                    fi
+                ) && git submodule init -- "${path}" ||
+                die "failed to initialize submodule '${name}'."
+            else
+                echo "Skipping missing submodule dir '${path}'."
+            fi
+        done <<<"$(git config -f .gitmodules --get-regex '^submodule[.][^.]+[.]url$' '^[.]/')"
+    fi
+
+    cd ..
+    if [ -e .gitmodules ]; then
+        git submodule add "./${dstname}"
+        git commit -m "promote to ${dstname} (from ${srcname})"
+    fi
+
+    echo
+    echo "Successfully initialized: ${dstname} ${dstpath}"
+}
+
+argparse() {
+    opt_yes=
+    opt_year=
+    opt_timeless=
+    arg_parent=
+    arg_to=
+    while [ $# -ge 1 ]
+    do
+        case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -y|--yes)
+            opt_yes=t
+            shift
+            ;;
+        --year)
+            opt_year=t
+            shift
+            ;;
+        --timeless)
+            opt_timeless=t
+            shift
+            ;;
+        --parent)
+            shift
+            if [ $# -eq 0 ]; then
+                die '--parent requires an argument.'
+            fi
+            arg_parent="$1"
+            shift
+            ;;
+        --to)
+            shift
+            if [ $# -eq 0 ]; then
+                die '--to requires an argument.'
+            fi
+            arg_to="$1"
+            shift
+            ;;
+        -*)
+            die "Unknown option $1"
+            ;;
+        *)
+            break
+            ;;
+        esac
+    done
+    if [ -z "${arg_to}" ]; then
+        die 'Missing --to.'
+    fi
+    if [ $# -gt 0 ]; then
+        die 'Invalid number of arguments.'
+    fi
+}
+
+addVersionNextRef() {
+    local next="$1"
+    local vmd='version.inc.md'
+
+    if ! [ -e "${vmd}" ]; then
+        die "Missing ${vmd}."
+    fi
+
+    if ! grep -q '^Next generations:' "${vmd}"; then
+        sed -e '/^\[^version\]: .*@@VERSION@@ of repo/ a \
+Next generations: none.' -- "${vmd}" >"${vmd}.tmp"
+        mv "${vmd}.tmp" "${vmd}"
+    fi
+    if ! grep -q '^Next generations:' "${vmd}"; then
+        die "Failed to insert 'Next generations:' in \`${vmd}\`."
+    fi
+
+    if ! grep -q "^Next generations:.*${next}" "${vmd}"; then
+        sed -e "s/^Next generations:/Next generations: \`${next}\`,/" \
+            -- "${vmd}" >"${vmd}.tmp"
+        mv "${vmd}.tmp" "${vmd}"
+    fi
+    if ! grep -q "^Next generations:.*${next}" "${vmd}"; then
+        die "Failed to insert '${next}' in \`${vmd}\`."
+    fi
+
+    if [ -z "$(git diff -- "${vmd}")" ]; then
+        return 20
+    fi
+
+    git commit -m "promote: Add forward ref to \`${next}\`" -- "${vmd}" || true
+}
+
+addVersionBackref() {
+    local srcname="$1"
+    local dstname="$2"
+    local vmd='version.inc.md'
+    cat "${vmd}" \
+    | sed -e "s/^Next generations: \`${dstname}\`,/Next generations:/" \
+    | sed -e "s/^Previous generations:/Previous generations: \`${srcname}\`,/" \
+    | cat >"${vmd}.tmp"
+    mv "${vmd}.tmp" "${vmd}"
+    git commit -m "promote to ${dstname}: Add backref to \`${srcname}\`" -- "${vmd}" || true
+}
+
+main "$@"

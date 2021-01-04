@@ -835,6 +835,78 @@ isWellformedProjectName() {
     egrep -q "${ergx}" <<<"$1"
 }
 
+# std2:/.../<project>/<name>
+ergxStd2URITimeless='
+    ^
+    std2:
+    (/[a-zA-Z0-9-]+)+
+    /[a-zA-Z][a-zA-Z0-9]+
+    /[a-zA-Z][a-zA-Z0-9]+
+    $
+'
+ergxStd2URITimeless="$(tr -d ' \n' <<<"${ergxStd2URITimeless}")"
+
+# std2:/.../<project>/<year>/<name>
+ergxStd2URIYear='
+    ^
+    std2:
+    (/[a-zA-Z0-9-]+)+
+    /[a-zA-Z][a-zA-Z0-9]+
+    /202[1-1]
+    /[a-zA-Z][a-zA-Z0-9]+
+    $
+'
+ergxStd2URIYear="$(tr -d ' \n' <<<"${ergxStd2URIYear}")"
+
+# std2:/.../<project>/<year>/<name>-<year>-<month>
+ergxStd2URIMonth='
+    ^
+    std2:
+    (/[a-zA-Z0-9-]+)+
+    /[a-zA-Z][a-zA-Z0-9]+
+    /202[1-1]
+    /[a-zA-Z][a-zA-Z0-9]+-202[1-1]-(0[1-9]|1[0-2])
+    $
+'
+ergxStd2URIMonth="$(tr -d ' \n' <<<"${ergxStd2URIMonth}")"
+
+isStd2URITimeless() {
+    egrep -q "${ergxStd2URITimeless}" <<<"$1"
+}
+
+isStd2URIYear() {
+    egrep -q "${ergxStd2URIYear}" <<<"$1"
+}
+
+isStd2URIMonth() {
+    egrep -q "${ergxStd2URIMonth}" <<<"$1"
+}
+
+fullnameFromStd2URI() {
+    local uri="$1"
+    local project year name
+    if isStd2URITimeless "${uri}"; then
+        name="$(basename "${uri}")"
+        uri="$(dirname "${uri}")"
+        project="$(basename "${uri}")"
+        printf '%s-%s' "${project}" "${name}"
+    elif isStd2URIMonth "${uri}"; then
+        name="$(basename "${uri}")"
+        uri="$(dirname "${uri}")"
+        year="$(basename "${uri}")"
+        uri="$(dirname "${uri}")"
+        project="$(basename "${uri}")"
+        printf '%s-%s' "${project}" "${name}"
+    elif isStd2URIYear "${uri}"; then
+        name="$(basename "${uri}")"
+        uri="$(dirname "${uri}")"
+        year="$(basename "${uri}")"
+        uri="$(dirname "${uri}")"
+        project="$(basename "${uri}")"
+        printf '%s-%s-%s' "${project}" "${name}" "${year}"
+    fi
+}
+
 split() {
     sed -e "s@$1@ @g" <<<"$2"
 }

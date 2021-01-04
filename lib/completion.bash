@@ -38,6 +38,7 @@ _stdtools2() {
             init-year
             life
             promote
+            promote-local
             publish-intern
             publish-merge-to-master
             publish-to-master
@@ -209,6 +210,19 @@ _stdtools2() {
                 --maintainer
                 --year --timeless --to
                 --branch
+            '
+            COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+            return 0
+            ;;
+        esac
+        ;;
+    promote-local)
+        case "${cur}" in
+        -*)
+            local opts='
+                -h --help
+                -y --yes
+                --year --timeless --to
             '
             COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
             return 0
