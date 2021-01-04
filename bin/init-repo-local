@@ -1,0 +1,276 @@
+#!/bin/bash
+# vim: sw=4
+set -o errexit -o nounset -o pipefail -o noglob
+
+toolsdir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && cd .. && pwd)
+source "${toolsdir}/lib/lib.sh"
+
+# Extensions that should be stored in LFS: simple files and directories and
+# all files below like Keynote documents.
+cfg_lfs_file_extensions='
+    AVI
+    TIF
+    am
+    avi
+    bin
+    csv
+    dat
+    doc
+    docx
+    eps
+    gif
+    icol
+    jpeg
+    jpg
+    key
+    m4v
+    mod
+    mov
+    mp4
+    mpg
+    npy
+    odg
+    oo3
+    pdf
+    png
+    ppt
+    pptm
+    pptx
+    raw
+    rec
+    surf
+    tar
+    tar.bz2
+    tar.gpg
+    tar.gz
+    tar.xz
+    tif
+    tiff
+    xls
+    xlsx
+    zip
+'
+cfg_lfs_dir_extensions='
+    key
+    oo3
+    sparsebundle
+'
+
+usage() {
+    cat <<\EOF
+Usage:
+  init-repo-local [--year] [--timeless] [--lfs|--no-lfs]
+        [--toolsconfig|--no-toolsconfig] <uri>
+
+Options:
+    <uri>
+        The std2 URI of the new repo.
+    --year  [default: no]
+        Allow year-only std2 URI.  The default is to require a month.
+    --timeless [default: no]
+        Allow a timeless std2 URI.
+    --lfs|--no-lfs  [default: yes]
+        Configure Git LFS for some file types and initialize Git LFS storage.
+    --toolsconfig|--no-toolsconfig  [default: yes]
+        Add default `.toolsconfig`.
+
+`stdtools init-repo-local` creates a local repo without remote.
+
+Std2 URI examples:
+
+    std2:/local/foohost/barproject/bazrepo               # timeless
+    std2:/local/foohost/barproject/2021/bazrepo          # year
+    std2:/local/foohost/barproject/2021/bazrepo-2021-01  # month
+
+EOF
+}
+
+main() {
+    if ! cfg_initials=$(git config user.initials); then
+        die "Failed to read user.initials (please set using 'git config --global user.initials')."
+    fi
+
+    argparse "$@"
+
+    if test ${opt_timeless}; then
+        if ! isStd2URITimeless "${arg_uri}"; then
+            die '<uri> is not a valid timeless std2 URI.'
+        fi
+    elif test ${opt_year}; then
+        if ! isStd2URIYear "${arg_uri}"; then
+            die '<uri> is not a valid year std2 URI.'
+        fi
+    else
+        if ! isStd2URIMonth "${arg_uri}"; then
+            die '<uri> is not a valid month std2 URI.'
+        fi
+    fi
+
+    fullname=$(fullnameFromStd2URI "${arg_uri}")
+    if [ -e "${fullname}" ]; then
+        die "Repo already exists: ${fullname}"
+    fi
+    shortname=$(shortnameFromStd2URI "${arg_uri}")
+
+    echo "    INIT ${fullname}"
+    mkdir "${fullname}"
+    cd "${fullname}"
+    git init
+
+    if test ${opt_lfs}; then
+        git lfs-x init
+    fi
+
+    touch .gitignore
+    echo '.DS_Store' >>.gitignore
+    echo '/product/' >>.gitignore
+    echo '~$*' >>.gitignore
+    git add .gitignore
+    git commit -m 'init'
+
+    local shortnameSpaces=$(tr '-' ' ' <<<"${shortname}")
+
+    cat >README.md <<EOF
+# ${shortnameSpaces} -- README
+By ${cfg_initials}
+<!--@@VERSIONINC@@-->
+
+## Introduction
+
+Stdrepo \`${fullname}\` contains information that need to be described.
+
+## Data management plan
+
+See [DATAPLAN](./DATAPLAN.md).
+EOF
+
+    cat >DATAPLAN.md <<EOF
+# ${shortnameSpaces} -- Data Management Plan
+By ${cfg_initials}
+<!--@@VERSIONINC@@-->
+
+See main [README](./README.md).
+
+## Strategy
+
+The strategy will be added during the first yearly review.
+
+## $(date +%F) Initialized repo (stdtools clone)
+EOF
+
+    cat >LOG.md <<EOF
+# ${shortnameSpaces} -- LOG
+By ${cfg_initials}
+<!--@@VERSIONINC@@-->
+
+## $(date +%F) Initialized repo (stdtools2 init-repo-local)
+EOF
+
+    # Use TitlePandoc `%`, because `version.inc.md` is only used if Markdown is
+    # pre-processed before passing it to Pandoc.
+    cat >version.inc.md <<EOF
+% @@DATE@@[^version]
+
+[^version]: @@VERSION@@ of repo \`@@REPO@@\`.
+Next generations: none.
+Previous generations: none.
+EOF
+
+    git add -- README.md DATAPLAN.md LOG.md version.inc.md
+    git commit -m 'add README, LOG, version info'
+
+    if test ${opt_lfs}; then
+        echo "    CONFIG lfs"
+        defaultLfsAttibutes >.gitattributes
+        git add .gitattributes
+        git commit -m 'init Git LFS extensions'
+    else
+        echo "    SKIP config lfs"
+    fi
+
+    if test ${opt_toolsconfig}; then
+        echo "    ADD .toolsconfig"
+        "${toolsdir}/bin/init-toolsconfig"
+        git add -- .toolsconfig
+        git commit -m "add default toolsconfig"
+    else
+        echo "    SKIP add .toolsconfig"
+    fi
+
+    "${toolsdir}/bin/init-hooks"
+
+    cd ..
+    if [ -e .gitmodules ]; then
+        git submodule add "./${fullname}"
+        git commit -m "init ${fullname}"
+    fi
+
+    echo
+    echo "Initialized: ${fullname}"
+}
+
+argparse() {
+    opt_year=
+    opt_timeless=
+    opt_lfs=t
+    opt_toolsconfig=t
+    arg_uri=
+    while [ $# -ge 1 ]
+    do
+        case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        --year)
+            opt_year=t
+            shift
+            ;;
+        --timeless)
+            opt_timeless=t
+            shift
+            ;;
+        --lfs)
+            opt_lfs=t
+            shift
+            ;;
+        --no-lfs)
+            opt_lfs=
+            shift
+            ;;
+        --toolsconfig)
+            opt_toolsconfig=t
+            shift
+            ;;
+        --no-toolsconfig)
+            opt_toolsconfig=
+            shift
+            ;;
+        -*)
+            die "Unknown option $1"
+            ;;
+        *)
+            if [ -z "${arg_uri}" ]; then
+                arg_uri="$1"
+                shift
+            else
+                die "Unknown argument $1"
+            fi
+            ;;
+        esac
+    done
+    if [ -z "${arg_uri}" ]; then
+        die 'Missing <uri>.'
+    fi
+}
+
+defaultLfsAttibutes() {
+    for ext in ${cfg_lfs_file_extensions}; do
+        printf '*.%s filter=lfs diff=lfs merge=lfs -text\n' ${ext}
+    done
+    for ext in ${cfg_lfs_dir_extensions}; do
+        printf '**/*.%s/** filter=lfs diff=lfs merge=lfs -text\n' ${ext}
+    done
+}
+
+main "$@"

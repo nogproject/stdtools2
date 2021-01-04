@@ -43,6 +43,7 @@ _stdtools2() {
             init-hooks
             init-project
             init-releases
+            init-repo-local
             init-toolsconfig
             init-year
             life
@@ -167,6 +168,21 @@ _stdtools2() {
         -*)
             local opts='
                 -h --help
+            '
+            COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
+            return 0
+            ;;
+        esac
+        ;;
+    init-repo-local)
+        case "${cur}" in
+        -*)
+            local opts='
+                -h --help
+                --year --timeless
+                --force
+                --lfs --no-lfs
+                --toolsconfig --no-toolsconfig
             '
             COMPREPLY=( $(compgen -W "${opts}" -- ${cur}) )
             return 0

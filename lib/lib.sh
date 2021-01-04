@@ -907,6 +907,21 @@ fullnameFromStd2URI() {
     fi
 }
 
+shortnameFromStd2URI() {
+    local uri="$1"
+    local project year name
+    if isStd2URITimeless "${uri}"; then
+        name="$(basename "${uri}")"
+        printf '%s' "${name}"
+    elif isStd2URIMonth "${uri}"; then
+        name="$(basename "${uri}")"
+        sed -e 's/-[0-9][0-9][0-9][0-9]-[0-9][0-9]$//' <<<"${name}"
+    elif isStd2URIYear "${uri}"; then
+        name="$(basename "${uri}")"
+        printf '%s' "${name}"
+    fi
+}
+
 split() {
     sed -e "s@$1@ @g" <<<"$2"
 }
