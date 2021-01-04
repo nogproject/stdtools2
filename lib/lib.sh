@@ -82,8 +82,8 @@ expectedLfsStandaloneTransferSshSemver='0.4.0'
 # Parameters that control `foreachAlternateCandidate`.
 #
 # `timelessYears` contains a few recent year.
-# Update it in 2021 to '2018 2019 2020 2021'.
-timelessYears='2017 2018 2019 2020'
+# Update it in 2022 to '2019 2020 2021 2022'.
+timelessYears='2018 2019 2020 2021'
 # `activeCiRepos` lists the previous and the current CI repo.  CI is not
 # supported by stdtools2.
 activeCiRepos=
@@ -100,7 +100,7 @@ cfg_stdtoolsYear() {
         die "Configure the current year with: git config --global stdtools.currentYear ${y}"
     fi
     case ${y} in
-    2019|2020)
+    2019|2020|2021)
         true
         ;;
     *)
