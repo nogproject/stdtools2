@@ -821,7 +821,7 @@ isValidRepoFullname() {
 }
 
 isValidDate() {
-    local ergx='^(201[3-9]|202[0-0])(-(0[1-9]|1[0-2]))?$'
+    local ergx='^(201[3-9]|202[0-1])(-(0[1-9]|1[0-2]))?$'
     egrep -q "${ergx}" <<<"$1"
 }
 
