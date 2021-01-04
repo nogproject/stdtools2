@@ -9,12 +9,21 @@ __stdtools2_ps1() {
         return
     fi
     local files=":/README.md :/index.md :/version.inc.md"
-    git grep -q '^THIS.*DEPRECATED' origin/master -- ${files} 2>/dev/null \
-        && printf "${fmt}" 'DEPRECATED'
-    git grep -q '^THIS.*RETIRED' origin/master -- ${files} 2>/dev/null \
-        && printf "${fmt}" 'RETIRED'
-    git grep -q '^THIS.*FROZEN' origin/master -- ${files} 2>/dev/null \
-        && printf "${fmt}" 'FROZEN'
+    if git grep -q '^THIS.*DEPRECATED' origin/master -- ${files} 2>/dev/null; then
+        printf "${fmt}" 'DEPRECATED'
+    elif git grep -q '^THIS.*DEPRECATED' HEAD -- ${files} 2>/dev/null; then
+        printf "${fmt}" 'DEPRECATED(local)'
+    fi
+    if git grep -q '^THIS.*RETIRED' origin/master -- ${files} 2>/dev/null; then
+        printf "${fmt}" 'RETIRED'
+    elif git grep -q '^THIS.*RETIRED' HEAD -- ${files} 2>/dev/null; then
+        printf "${fmt}" 'RETIRED(local)'
+    fi
+    if git grep -q '^THIS.*FROZEN' origin/master -- ${files} 2>/dev/null; then
+        printf "${fmt}" 'FROZEN'
+    elif git grep -q '^THIS.*FROZEN' HEAD -- ${files} 2>/dev/null; then
+        printf "${fmt}" 'FROZEN(local)'
+    fi
 }
 
 _stdtools2() {
