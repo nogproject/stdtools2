@@ -167,6 +167,8 @@ If '${superdir}' is a project folder, see 'stdtools init-project -h' to create i
         umask 0007
     fi
     git submodule add "./${subdir}"
+    # Avoid permission denied if file owned by a different user.
+    rm -f '.git/COMMIT_EDITMSG' || true
     git commit -m "promote to ${dstname}: Add submodule '${subdir}' (promoted from '${srcname}')"
 }
 
