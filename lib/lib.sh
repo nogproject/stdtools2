@@ -840,8 +840,8 @@ ergxStd2URITimeless='
     ^
     std2:
     (/[a-zA-Z0-9-]+)+
-    /[a-zA-Z][a-zA-Z0-9]+
-    /[a-zA-Z][a-zA-Z0-9]+
+    /[a-zA-Z][a-zA-Z0-9-]+
+    /[a-zA-Z][a-zA-Z0-9-]+
     $
 '
 ergxStd2URITimeless="$(tr -d ' \n' <<<"${ergxStd2URITimeless}")"
@@ -851,9 +851,9 @@ ergxStd2URIYear='
     ^
     std2:
     (/[a-zA-Z0-9-]+)+
-    /[a-zA-Z][a-zA-Z0-9]+
+    /[a-zA-Z][a-zA-Z0-9-]+
     /202[1-1]
-    /[a-zA-Z][a-zA-Z0-9]+
+    /[a-zA-Z][a-zA-Z0-9-]+
     $
 '
 ergxStd2URIYear="$(tr -d ' \n' <<<"${ergxStd2URIYear}")"
@@ -863,9 +863,9 @@ ergxStd2URIMonth='
     ^
     std2:
     (/[a-zA-Z0-9-]+)+
-    /[a-zA-Z][a-zA-Z0-9]+
+    /[a-zA-Z][a-zA-Z0-9-]+
     /202[1-1]
-    /[a-zA-Z][a-zA-Z0-9]+-202[1-1]-(0[1-9]|1[0-2])
+    /[a-zA-Z][a-zA-Z0-9-]+-202[1-1]-(0[1-9]|1[0-2])
     $
 '
 ergxStd2URIMonth="$(tr -d ' \n' <<<"${ergxStd2URIMonth}")"
