@@ -112,6 +112,14 @@ main() {
     fi
     shortname=$(shortnameFromStd2URI "${arg_uri}")
 
+    confirmNotice "
+Will init:
+
+  - URI: ${arg_uri}
+  - directory: ${fullname}
+  - LFS: $(if test ${opt_lfs}; then echo 'yes'; else echo 'no'; fi)
+" "ok"
+
     echo "    INIT ${fullname}"
     mkdir "${fullname}"
     cd "${fullname}"
