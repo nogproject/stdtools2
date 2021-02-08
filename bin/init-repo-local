@@ -60,15 +60,15 @@ usage() {
     cat <<\EOF
 Usage:
   init-repo-local [--year] [--timeless] [--lfs|--no-lfs]
-        [--toolsconfig|--no-toolsconfig] <uri>
+        [--toolsconfig|--no-toolsconfig] <fullname>
 
 Options:
-    <uri>
-        The std2 URI of the new repo.
+    <fullname>
+        The std2 fullname of the new repo.
     --year  [default: no]
-        Allow year-only std2 URI.  The default is to require a month.
+        Allow year-only name.  The default is to require a month.
     --timeless [default: no]
-        Allow a timeless std2 URI.
+        Allow a timeless name.
     --lfs|--no-lfs  [default: yes]
         Configure Git LFS for some file types and initialize Git LFS storage.
     --toolsconfig|--no-toolsconfig  [default: yes]
@@ -76,11 +76,11 @@ Options:
 
 `stdtools init-repo-local` creates a local repo without remote.
 
-Std2 URI examples:
+Std2 fullname examples:
 
-    std2:/local/foohost/barproject/bazrepo               # timeless
-    std2:/local/foohost/barproject/2021/bazrepo          # year
-    std2:/local/foohost/barproject/2021/bazrepo-2021-01  # month
+    fooproject-barrepo          # timeless
+    fooproject-barrepo-2021     # year
+    fooproject-barrepo-2021-01  # month
 
 EOF
 }
@@ -93,29 +93,28 @@ main() {
     argparse "$@"
 
     if test ${opt_timeless}; then
-        if ! isStd2URITimeless "${arg_uri}"; then
-            die '<uri> is not a valid timeless std2 URI.'
+        if ! isStd2FullnameTimeless "${arg_name}"; then
+            die '<name> is not a valid timeless std2 fullname.'
         fi
     elif test ${opt_year}; then
-        if ! isStd2URIYear "${arg_uri}"; then
-            die '<uri> is not a valid year std2 URI.'
+        if ! isStd2FullnameYear "${arg_name}"; then
+            die '<name> is not a valid year std2 fullname.'
         fi
     else
-        if ! isStd2URIMonth "${arg_uri}"; then
-            die '<uri> is not a valid month std2 URI.'
+        if ! isStd2FullnameMonth "${arg_name}"; then
+            die '<name> is not a valid month std2 fullname.'
         fi
     fi
 
-    fullname=$(fullnameFromStd2URI "${arg_uri}")
+    fullname="${arg_name}"
     if [ -e "${fullname}" ]; then
         die "Repo already exists: ${fullname}"
     fi
-    shortname=$(shortnameFromStd2URI "${arg_uri}")
+    shortname=$(shortnameFromStd2Fullname "${fullname}")
 
     confirmNotice "
 Will init:
 
-  - URI: ${arg_uri}
   - directory: ${fullname}
   - LFS: $(if test ${opt_lfs}; then echo 'yes'; else echo 'no'; fi)
 " "ok"
@@ -222,7 +221,7 @@ argparse() {
     opt_timeless=
     opt_lfs=t
     opt_toolsconfig=t
-    arg_uri=
+    arg_name=
     while [ $# -ge 1 ]
     do
         case "$1" in
@@ -258,8 +257,8 @@ argparse() {
             die "Unknown option $1"
             ;;
         *)
-            if [ -z "${arg_uri}" ]; then
-                arg_uri="$1"
+            if [ -z "${arg_name}" ]; then
+                arg_name="$1"
                 shift
             else
                 die "Unknown argument $1"
@@ -267,8 +266,8 @@ argparse() {
             ;;
         esac
     done
-    if [ -z "${arg_uri}" ]; then
-        die 'Missing <uri>.'
+    if [ -z "${arg_name}" ]; then
+        die 'Missing <name>.'
     fi
 }
 

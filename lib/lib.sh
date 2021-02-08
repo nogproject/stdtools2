@@ -835,90 +835,87 @@ isWellformedProjectName() {
     egrep -q "${ergx}" <<<"$1"
 }
 
-# std2:/.../<project>/<name>
-ergxStd2URITimeless='
+# fooproject-barrepo
+ergxStd2FullnameTimeless='
     ^
-    std2:
-    (/[a-zA-Z0-9-]+)+
-    /[a-zA-Z][a-zA-Z0-9-]+
-    /[a-zA-Z][a-zA-Z0-9-]+
+    [a-zA-Z][a-zA-Z0-9-]+
+    -
+    [a-zA-Z][a-zA-Z0-9-]+
     $
 '
-ergxStd2URITimeless="$(tr -d ' \n' <<<"${ergxStd2URITimeless}")"
+ergxStd2FullnameTimeless="$(tr -d ' \n' <<<"${ergxStd2FullnameTimeless}")"
 
-# std2:/.../<project>/<year>/<name>
-ergxStd2URIYear='
+# fooproject-barrepo-2021
+ergxStd2FullnameYear='
     ^
-    std2:
-    (/[a-zA-Z0-9-]+)+
-    /[a-zA-Z][a-zA-Z0-9-]+
-    /202[1-1]
-    /[a-zA-Z][a-zA-Z0-9-]+
+    [a-zA-Z][a-zA-Z0-9-]+
+    -
+    [a-zA-Z][a-zA-Z0-9-]+
+    -
+    202[1-1]
     $
 '
-ergxStd2URIYear="$(tr -d ' \n' <<<"${ergxStd2URIYear}")"
+ergxStd2FullnameYear="$(tr -d ' \n' <<<"${ergxStd2FullnameYear}")"
 
-# std2:/.../<project>/<year>/<name>-<year>-<month>
-ergxStd2URIMonth='
+# fooproject-barrepo-xxxx
+ergxStd2FullnameAnyYear='
     ^
-    std2:
-    (/[a-zA-Z0-9-]+)+
-    /[a-zA-Z][a-zA-Z0-9-]+
-    /202[1-1]
-    /[a-zA-Z][a-zA-Z0-9-]+-202[1-1]-(0[1-9]|1[0-2])
+    [a-zA-Z][a-zA-Z0-9-]+
+    -
+    [a-zA-Z][a-zA-Z0-9-]+
+    -
+    [0-9][0-9][0-9][0-9]
     $
 '
-ergxStd2URIMonth="$(tr -d ' \n' <<<"${ergxStd2URIMonth}")"
+ergxStd2FullnameAnyYear="$(tr -d ' \n' <<<"${ergxStd2FullnameAnyYear}")"
 
-isStd2URITimeless() {
-    egrep -q "${ergxStd2URITimeless}" <<<"$1"
+# fooproject-barrepo-2021-01
+ergxStd2FullnameMonth='
+    ^
+    [a-zA-Z][a-zA-Z0-9-]+
+    -
+    [a-zA-Z][a-zA-Z0-9-]+
+    -
+    202[1-1]-(0[1-9]|1[0-2])
+    $
+'
+ergxStd2FullnameMonth="$(tr -d ' \n' <<<"${ergxStd2FullnameMonth}")"
+
+# fooproject-barrepo-xxxx-xx
+ergxStd2FullnameAnyMonth='
+    ^
+    [a-zA-Z][a-zA-Z0-9-]+
+    -
+    [a-zA-Z][a-zA-Z0-9-]+
+    -
+    [0-9][0-9][0-9][1-1]-[0-9][0-9]
+    $
+'
+ergxStd2FullnameAnyMonth="$(tr -d ' \n' <<<"${ergxStd2FullnameAnyMonth}")"
+
+isStd2FullnameTimeless() {
+    egrep -q "${ergxStd2FullnameTimeless}" <<<"$1" \
+    && ! egrep -q "${ergxStd2FullnameAnyYear}" <<<"$1" \
+    && ! egrep -q "${ergxStd2FullnameAnyMonth}" <<<"$1"
 }
 
-isStd2URIYear() {
-    egrep -q "${ergxStd2URIYear}" <<<"$1"
+isStd2FullnameYear() {
+    egrep -q "${ergxStd2FullnameYear}" <<<"$1"
 }
 
-isStd2URIMonth() {
-    egrep -q "${ergxStd2URIMonth}" <<<"$1"
+isStd2FullnameMonth() {
+    egrep -q "${ergxStd2FullnameMonth}" <<<"$1"
 }
 
-fullnameFromStd2URI() {
-    local uri="$1"
+shortnameFromStd2Fullname() {
+    local fullname="$1"
     local project year name
-    if isStd2URITimeless "${uri}"; then
-        name="$(basename "${uri}")"
-        uri="$(dirname "${uri}")"
-        project="$(basename "${uri}")"
-        printf '%s-%s' "${project}" "${name}"
-    elif isStd2URIMonth "${uri}"; then
-        name="$(basename "${uri}")"
-        uri="$(dirname "${uri}")"
-        year="$(basename "${uri}")"
-        uri="$(dirname "${uri}")"
-        project="$(basename "${uri}")"
-        printf '%s-%s' "${project}" "${name}"
-    elif isStd2URIYear "${uri}"; then
-        name="$(basename "${uri}")"
-        uri="$(dirname "${uri}")"
-        year="$(basename "${uri}")"
-        uri="$(dirname "${uri}")"
-        project="$(basename "${uri}")"
-        printf '%s-%s-%s' "${project}" "${name}" "${year}"
-    fi
-}
-
-shortnameFromStd2URI() {
-    local uri="$1"
-    local project year name
-    if isStd2URITimeless "${uri}"; then
-        name="$(basename "${uri}")"
-        printf '%s' "${name}"
-    elif isStd2URIMonth "${uri}"; then
-        name="$(basename "${uri}")"
-        sed -e 's/-[0-9][0-9][0-9][0-9]-[0-9][0-9]$//' <<<"${name}"
-    elif isStd2URIYear "${uri}"; then
-        name="$(basename "${uri}")"
-        printf '%s' "${name}"
+    if isStd2FullnameTimeless "${fullname}"; then
+        sed -e 's/^[^-]*//' <<<"${fullname}"
+    elif isStd2FullnameYear "${fullname}"; then
+        sed -e 's/^[^-]*//' -e 's/-[0-9][0-9][0-9][0-9]$//' <<<"${fullname}"
+    elif isStd2FullnameMonth "${fullname}"; then
+        sed -e 's/^[^-]*//' -e 's/-[0-9][0-9][0-9][0-9]-[0-9][0-9]$//' <<<"${fullname}"
     fi
 }
 

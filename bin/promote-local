@@ -9,15 +9,15 @@ usage() {
     cat <<\EOF
 Usage:
   promote-local [-y|--yes] [--year] [--timeless]
-        [--parent <dir>] --to <URI>
+        [--parent <dir>] --to <fullname>
 
 Options:
-    --to <URI>
-        The std2 URI of the new repo.
+    <fullname>
+        The std2 fullname of the new repo.
     --year  [default: no]
-        Allow year-only std2 URI.  The default is to require a month.
+        Allow year-only std2 name.  The default is to require a month.
     --timeless [default: no]
-        Allow a timeless std2 URI.
+        Allow a timeless std2 name.
     --parent <dir>
         Parent directory of the new repo.
     -y|--yes  Assume yes to all confirmations.
@@ -29,11 +29,11 @@ subrepo is a submodules whose path starts with `./`.  Tags are not fetched.
 The new repo generation must be in the year configured in
 `stdtools.currentYear` unless it is timeless.
 
-Std2 URI examples:
+Std2 fullname examples:
 
-    std2:/local/foohost/barproject/bazrepo               # timeless
-    std2:/local/foohost/barproject/2021/bazrepo          # year
-    std2:/local/foohost/barproject/2021/bazrepo-2021-01  # month
+    fooproject-barrepo          # timeless
+    fooproject-barrepo-2021     # year
+    fooproject-barrepo-2021-01  # month
 
 EOF
 }
@@ -43,16 +43,16 @@ main() {
     stdtoolsYear=$(cfg_stdtoolsYear)
 
     if test ${opt_timeless}; then
-        if ! isStd2URITimeless "${arg_to}"; then
-            die '--to is not a valid timeless std2 URI.'
+        if ! isStd2FullnameTimeless "${arg_to}"; then
+            die '--to is not a valid timeless std2 fullname.'
         fi
     elif test ${opt_year}; then
-        if ! isStd2URIYear "${arg_to}"; then
-            die '--to is not a valid year std2 URI.'
+        if ! isStd2FullnameYear "${arg_to}"; then
+            die '--to is not a valid year std2 fullname.'
         fi
     else
-        if ! isStd2URIMonth "${arg_to}"; then
-            die '--to is not a valid month std2 URI.'
+        if ! isStd2FullnameMonth "${arg_to}"; then
+            die '--to is not a valid month std2 fullname.'
         fi
     fi
 
@@ -71,7 +71,7 @@ main() {
     fi
     srcpath="$(pwd)"
 
-    dstname=$(fullnameFromStd2URI "${arg_to}")
+    dstname="${arg_to}"
     dstpath="${parent}/${dstname}"
     if [ -e "${dstpath}" ]; then
         die "--to already exists: ${dstpath}"
@@ -87,7 +87,6 @@ Will promote:
   - source path: ${srcpath}
   - destination name: ${dstname}
   - destination path: ${dstpath}
-  - destination URI: ${arg_to}
 " "ok"
 
     if [ -e 'version.inc.md' ]; then
