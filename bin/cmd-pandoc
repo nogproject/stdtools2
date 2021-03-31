@@ -50,7 +50,7 @@ scopes and with different importance:
 
     git config (--local|--global) tools.pandocstyle <style>
 
-* toolsconfig: The style can be shared per stdrepo to ensure the same style for
+* toolsconfig: The style can be shared per repo to ensure the same style for
   all repo contributors.  This mode overwrites the git-config settings.
 
     git config --file .toolsconfig build.pandoc.style <style>
@@ -330,8 +330,8 @@ getVersionNoteHtml() {
     <<< "Build ${version} of repo \`${repo}\`.  ${generations}"
 }
 
-# `getRepoNameForVersion()` prints the stdrepo or the substdrepo name.  If the
-# remote has an unknown URL, it prints a stripped version of the remote URL.
+# `getRepoNameForVersion()` prints the repo or the subrepo name.  If the remote
+# has an unknown URL, it prints a stripped version of the remote URL.
 getRepoNameForVersion() {
     local name url
     name=$(getRepoCommonName2)

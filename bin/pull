@@ -56,15 +56,16 @@ main() {
     if ! verifyOnMasterBranches; then
         warn "Some working copies are not on branch '${my_master}'.
 
-This warning may be meaningless if you use submodules that are unrelated
-to stdrepos, for example public GitHub repos.  If this is the case, consider
+This warning may be meaningless if you use submodules that are not managed
+with Stdtools, for example public GitHub repos.  If this is the case, consider
 using ordinary git commands instead of stdtools pull.
 
-To fix the warning for stdrepos and subrepos, you need to checkout the local
-branch '${my_master}' in the submodule with the commit that matches the
-supermodule.  If you already have a branch '${my_master}' that points to
-something else in the submodule, you should be careful to avoid loosing local
-changes.  The right sequence of commands often is:
+To fix the warning for repos and subrepos that are managed by Stdtools, you
+need to checkout the local branch '${my_master}' in the submodule with the
+commit that matches the supermodule.  If you already have a branch
+'${my_master}' that points to something else in the submodule, you should be
+careful to avoid loosing local changes.  The right sequence of commands often
+is:
 
     cd <submodule>
     git branch -f ${my_master}
@@ -79,13 +80,13 @@ changes.  The right sequence of commands often is:
     if ! verifyCanFFSubs; then
         die "Cannot fast-forward '${my_master}' to 'origin/master' in some submodules.
 
-This error may be meaningless if you use submodules that are unrelated to
-stdrepos, for example public GitHub repos.  If this is the case, consider using
+This error may be meaningless if you use submodules that are not managed with
+Stdtools, for example public GitHub repos.  If this is the case, consider using
 ordinary git commands instead of stdtools pull.
 
-To resolve the situation for stdrepos and subrepos, you need to manually merge
-the submodules and the supermodule.  See 'Merging Submodule Changes' in the git
-book <https://goo.gl/0YPcJC> for guidance.
+To resolve the situation for repos and subrepos that are managed by Stdtools,
+you need to manually merge the submodules and the supermodule.  See 'Merging
+Submodule Changes' in the git book <https://goo.gl/0YPcJC> for guidance.
 "
     fi
 

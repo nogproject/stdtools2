@@ -63,7 +63,7 @@ usage() {
 Usage:
   clone [options] [--subrepos] [--create] [--maintainer <uid>]
         [--year|--timeless] [--lfs|--no-lfs]
-        [--subrepo <stdrepo>/<subrepo> <subrepo-branch> <branch-alias> | <stdrepo>]
+        [--subrepo <repo>/<subrepo> <subrepo-branch> <branch-alias> | <repo>]
 
 Options:
     --create    Create remote repository if it doesn't exist.
@@ -95,20 +95,20 @@ Options:
                 added.
     --subrepos|--no-subrepos  [default: yes]
                 If enabled, also run `clone-subrepos`.
-    --subrepo <stdrepo>/<subrepo> <subrepo-branch> <branch-alias>
+    --subrepo <repo>/<subrepo> <subrepo-branch> <branch-alias>
                 instead of cloning the repo itself, clone branch
                 `<subrepo-branch>` of the subrepo to
-                `<stdrepo>__<subrepo>__<branch-alias>`.
+                `<repo>__<subrepo>__<branch-alias>`.
 
 `stdtools clone` clones a repo from the standard location on SSH host
 `<stdtools.stdhost>` in directory `<stdtools.stdhostprojects>` to the current
 directory.
 
-The format of `<stdrepo>` is `<PROJECT>_<SHORTNAME>_<DATE>` where
+The format of `<repo>` is `<PROJECT>_<SHORTNAME>_<DATE>` where
 `<DATE>=<YEAR>[-<MONTH>]`, for example `foo-data_2019-04`, or
 `<PROJECT>_<SHORTNAME>` for `--timeless` repos.  See below for older formats.
-If no name is provided, some setup operations will be performed on the stdrepo
-in the current directory, such as installing Git hooks and cloning subrepos.
+If no name is provided, some setup operations will be performed on the repo in
+the current directory, such as installing Git hooks and cloning subrepos.
 
 `stdtools clone` can be safely run if the repo has been cloned before to apply
 additional operations, such as adding the stdtools.
@@ -383,7 +383,7 @@ argparse() {
             fi
             IFS=/ read -r arg_name arg_subrepo <<<"$2"
             if [ -z "${arg_subrepo}" ]; then
-                die 'Missing <subrepo> in <stdrepo>/<subrepo>.'
+                die 'Missing <subrepo> in <repo>/<subrepo>.'
             fi
             arg_subrepo_branch="$3"
             arg_branch_alias="$4"

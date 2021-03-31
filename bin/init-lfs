@@ -13,12 +13,12 @@ Usage:
   init-lfs <repo> <subrepos>...
 
 Options:
-  <repo>      Full name of a stdrepo.  The default is to determine the repo for
+  <repo>      Full name of a repo.  The default is to determine the repo for
               the current directory, which may be explicitly indicated by `.`.
   <subrepos>  Relative paths to subrepos.  Examples: `.`, `releases`.
-  -a --all    Initialize stdrepo and all subrepos.
+  -a --all    Initialize repo and all subrepos.
 
-`stdtools init-lfs` initialize LFS stores in a remote stdrepo and its subrepos.
+`stdtools init-lfs` initialize LFS stores in a remote repo and its subrepos.
 EOF
     exit 1
 }

@@ -13,9 +13,9 @@ Usage:
 Options:
   --fix  Automatically fix some obvious problems.
 
-`stdtools doctor` inspects your environment and the current stdrepo working
-copy and reports protential problems.  It tries to fix some obvious problems
-when started with `--fix`.
+`stdtools doctor` inspects your environment and the current repo working copy
+and reports protential problems.  It tries to fix some obvious problems when
+started with `--fix`.
 EOF
     exit 1
 }

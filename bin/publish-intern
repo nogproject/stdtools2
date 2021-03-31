@@ -105,9 +105,9 @@ You should merge other master branches before publishing and publish from a
 branch named `<initials>/master`.  Alternatively, you can disabled the check
 with --no-master-check and ask someone else to merge the master branches.
 
-To resolve diverged branches for stdrepos and subrepos, you need to manually
-merge in the submodules and the supermodule.  See "Merging Submodule Changes"
-in the git book <https://goo.gl/0YPcJC> for guidance.
+To resolve diverged branches for repos and subrepos, you need to manually merge
+in the submodules and the supermodule.  See "Merging Submodule Changes" in the
+git book <https://goo.gl/0YPcJC> for guidance.
 
 You can use --force to ignore all warnings and publish anyway.
 '

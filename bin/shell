@@ -16,7 +16,7 @@ Options:
 
 `stdtools shell` opens a remote shell on the host specified in Git config
 `stdtools.stdhost`.  `<location>` can be a repo name, a project directory, or a
-project/year directory.  '.' means the stdrepo in the current directory.  No
+project/year directory.  '.' means the repo in the current directory.  No
 location means Git config `stdtools.stdhostprojects`.  See examples below.
 
 Examples:
