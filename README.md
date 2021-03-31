@@ -1,4 +1,4 @@
-# Stdtools 2 -- README
+# Stdtools 2: README
 By spr
 <!--@@VERSIONINC@@-->
 

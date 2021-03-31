@@ -138,7 +138,7 @@ Will init:
     local shortnameSpaces=$(tr '-' ' ' <<<"${shortname}")
 
     cat >README.md <<EOF
-# ${shortnameSpaces} -- README
+# ${shortnameSpaces}: README
 By ${cfg_initials}
 <!--@@VERSIONINC@@-->
 
@@ -152,7 +152,7 @@ See [DATAPLAN](./DATAPLAN.md).
 EOF
 
     cat >DATAPLAN.md <<EOF
-# ${shortnameSpaces} -- Data Management Plan
+# ${shortnameSpaces}: Data Management Plan
 By ${cfg_initials}
 <!--@@VERSIONINC@@-->
 
@@ -166,7 +166,7 @@ The strategy will be added during the first yearly review.
 EOF
 
     cat >LOG.md <<EOF
-# ${shortnameSpaces} -- LOG
+# ${shortnameSpaces}: LOG
 By ${cfg_initials}
 <!--@@VERSIONINC@@-->
 

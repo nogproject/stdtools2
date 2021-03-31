@@ -66,7 +66,7 @@ initSubmodule() {
 
     local spacedShortname=$(tr '-' ' ' <<<"${shortname}")
     cat >README.md <<EOF
-# ${spacedShortname} -- README
+# ${spacedShortname}: README
 By ${cfg_initials}
 <!--@@VERSIONINC@@-->
 
@@ -80,7 +80,7 @@ See [DATAPLAN](./DATAPLAN.md).
 EOF
 
     cat >DATAPLAN.md <<EOF
-# ${spacedShortname} -- Data Management Plan
+# ${spacedShortname}: Data Management Plan
 By ${cfg_initials}
 <!--@@VERSIONINC@@-->
 
@@ -94,7 +94,7 @@ The strategy will be added during the first yearly review.
 EOF
 
     cat >LOG.md <<EOF
-# ${spacedShortname} -- LOG
+# ${spacedShortname}: LOG
 By ${cfg_initials}
 <!--@@VERSIONINC@@-->
 
