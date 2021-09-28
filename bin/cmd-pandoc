@@ -120,6 +120,7 @@ cmdPandoc() {
     local style="$(getPandocStyle)"
     pandocArgs=(
         --standalone
+        --to="${arg_outtype}"
         --mathjax="${mathjax_url}"
         --template="${toolsdir}/lib/pandoc/template-${style}.html"
     )
