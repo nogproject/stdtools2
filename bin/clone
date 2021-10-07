@@ -43,9 +43,12 @@ cfg_lfs_file_extensions='
     surf
     tar
     tar.bz2
+    tar.bz2.gpg
     tar.gpg
     tar.gz
+    tar.gz.gpg
     tar.xz
+    tar.xz.gpg
     tif
     tiff
     xls
