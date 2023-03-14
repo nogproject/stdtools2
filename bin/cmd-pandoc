@@ -466,8 +466,11 @@ detectPandoc() {
     2)
         opt_smart='-f markdown+smart'
         ;;
+    3)
+        opt_smart='-f markdown+smart'
+        ;;
     *)
-        die 'Unsupported Pandoc version.  Expected 1.9 <= version < 3.0.'
+        die 'Unsupported Pandoc version.  Expected 1.9 <= version < 4.0.'
         ;;
     esac
 }
