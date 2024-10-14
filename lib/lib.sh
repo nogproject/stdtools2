@@ -838,9 +838,9 @@ isWellformedProjectName() {
 # fooproject-barrepo
 ergxStd2FullnameTimeless='
     ^
-    [a-zA-Z][a-zA-Z0-9-]+
+    [a-zA-Z][a-zA-Z0-9]+
     -
-    [a-zA-Z][a-zA-Z0-9-]+
+    [a-zA-Z][a-zA-Z0-9]+
     $
 '
 ergxStd2FullnameTimeless="$(tr -d ' \n' <<<"${ergxStd2FullnameTimeless}")"
@@ -848,9 +848,9 @@ ergxStd2FullnameTimeless="$(tr -d ' \n' <<<"${ergxStd2FullnameTimeless}")"
 # fooproject-barrepo-2021
 ergxStd2FullnameYear='
     ^
-    [a-zA-Z][a-zA-Z0-9-]+
+    [a-zA-Z][a-zA-Z0-9]+
     -
-    [a-zA-Z][a-zA-Z0-9-]+
+    [a-zA-Z][a-zA-Z0-9]+
     -
     202[1-4]
     $
@@ -860,9 +860,9 @@ ergxStd2FullnameYear="$(tr -d ' \n' <<<"${ergxStd2FullnameYear}")"
 # fooproject-barrepo-xxxx
 ergxStd2FullnameAnyYear='
     ^
-    [a-zA-Z][a-zA-Z0-9-]+
+    [a-zA-Z][a-zA-Z0-9]+
     -
-    [a-zA-Z][a-zA-Z0-9-]+
+    [a-zA-Z][a-zA-Z0-9]+
     -
     [0-9][0-9][0-9][0-9]
     $
@@ -872,9 +872,9 @@ ergxStd2FullnameAnyYear="$(tr -d ' \n' <<<"${ergxStd2FullnameAnyYear}")"
 # fooproject-barrepo-2021-01
 ergxStd2FullnameMonth='
     ^
-    [a-zA-Z][a-zA-Z0-9-]+
+    [a-zA-Z][a-zA-Z0-9]+
     -
-    [a-zA-Z][a-zA-Z0-9-]+
+    [a-zA-Z][a-zA-Z0-9]+
     -
     202[1-4]-(0[1-9]|1[0-2])
     $
@@ -884,9 +884,9 @@ ergxStd2FullnameMonth="$(tr -d ' \n' <<<"${ergxStd2FullnameMonth}")"
 # fooproject-barrepo-xxxx-xx
 ergxStd2FullnameAnyMonth='
     ^
-    [a-zA-Z][a-zA-Z0-9-]+
+    [a-zA-Z][a-zA-Z0-9]+
     -
-    [a-zA-Z][a-zA-Z0-9-]+
+    [a-zA-Z][a-zA-Z0-9]+
     -
     [0-9][0-9][0-9][1-1]-[0-9][0-9]
     $
