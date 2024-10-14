@@ -9,7 +9,7 @@ usage() {
     cat <<\EOF
 Usage:
   promote-local [-y|--yes] [--year] [--timeless]
-        [--parent <dir>] --to <fullname>
+        [--parent <dir>] [--srcname <name>] --to <fullname>
 
 Options:
     <fullname>
@@ -20,6 +20,8 @@ Options:
         Allow a timeless std2 name.
     --parent <dir>
         Parent directory of the new repo.
+    --srcname <name>
+        Override source repo name, skipping detection from origin URL.
     -y|--yes  Assume yes to all confirmations.
 
 `stdtools promote-local` creates a new repo generation locally from the repo in
@@ -65,9 +67,22 @@ main() {
         die "Parent dir does not exist: ${parent}"
     fi
 
-    srcname="$(getRepoCommonName2)"
-    if ! isValidRepoFullname "${srcname}"; then
-        die "Failed to determine <repo> from current directory."
+    if [ -n "${arg_srcname}" ]; then
+        srcname="${arg_srcname}"
+        isStd2FullnameTimeless "${srcname}" && echo XXX std2
+        if ! (
+            isValidRepoFullname "${srcname}" ||
+            isStd2Fullname "${srcname}"
+        ); then
+            confirmWarning "
+--srcname is not a valid repo fullname.
+" "Continue anyway"
+        fi
+    else
+        srcname="$(getRepoCommonName2)"
+        if ! isValidRepoFullname "${srcname}"; then
+            die "Failed to determine <repo> from current directory."
+        fi
     fi
     srcpath="$(pwd)"
 
@@ -186,6 +201,7 @@ argparse() {
     opt_year=
     opt_timeless=
     arg_parent=
+    arg_srcname=
     arg_to=
     while [ $# -ge 1 ]
     do
@@ -212,6 +228,14 @@ argparse() {
                 die '--parent requires an argument.'
             fi
             arg_parent="$1"
+            shift
+            ;;
+        --srcname)
+            shift
+            if [ $# -eq 0 ]; then
+                die '--srcname requires an argument.'
+            fi
+            arg_srcname="$1"
             shift
             ;;
         --to)

@@ -907,6 +907,12 @@ isStd2FullnameMonth() {
     egrep -q "${ergxStd2FullnameMonth}" <<<"$1"
 }
 
+isStd2Fullname() {
+    isStd2FullnameTimeless "$1" ||
+    isStd2FullnameYear "$1" ||
+    isStd2FullnameMonth "$1"
+}
+
 shortnameFromStd2Fullname() {
     local fullname="$1"
     local project year name
