@@ -8,10 +8,18 @@ source "${toolsdir}/lib/lib.sh"
 usage() {
     cat <<\EOF
 Usage:
-  life retire
-  life deprecate-retire
-  life deprecate-freeze
-  life freeze
+  life [--repo <name> --generation <date>] retire
+  life [--repo <name> --generation <date>] deprecate-retire
+  life [--repo <name> --generation <date>] deprecate-freeze
+  life [--repo <name> --generation <date>] freeze
+
+Options:
+    --repo <name>
+        Override detecting name from origin URL.
+        Must be use together with `--generation`.
+    --generation <date>
+        Override detecting name from origin URL.
+        Must be use together with `--repo`.
 
 `stdtools life <stage>` udpates the notice in `version.inc.md` to the specified
 stage.
@@ -96,11 +104,17 @@ main() {
         echo "Created default ${vmd}."
     fi
 
-    repo="$(getRepoCommonName2)"
-    if ! isValidRepoFullname "${repo}"; then
-        die "Failed to determine <repo> from current directory."
+    if [ -n "${arg_repo}" ]; then
+        repo="${arg_repo}"
+        generation="${arg_generation}"
+    else
+        repo="$(getRepoCommonName2)"
+        if ! isValidRepoFullname "${repo}"; then
+            die "Failed to determine <repo> from current directory."
+        fi
+        read _ _ date _ <<<"$(parseRepoName ${repo})"
+        generation=date
     fi
-    read _ _ date _ <<<"$(parseRepoName ${repo})"
 
     cat "${vmd}" \
     | sed -n \
@@ -114,7 +128,7 @@ main() {
 
     # Drop deprecate details, e.g. "deprecate_freeze" -> "deprecate".
     stageMsg="${arg_stage/_*/}"
-    if git commit -m "life: ${stageMsg} ${date} generation" -- "${vmd}"; then
+    if git commit -m "life: ${stageMsg} generation ${generation}" -- "${vmd}"; then
         echo
         echo "Updated ${vmd} notice to ${stageMsg}."
     fi
@@ -128,11 +142,28 @@ deleteTrailingBlankLines() {
 
 argparse() {
     arg_stage=
-    opt_compression=gzip
+    arg_repo=
+    arg_generation=
     while [ $# -ge 1 ]; do
         case "$1" in
         -h|--help)
             usage
+            ;;
+        --repo)
+            shift
+            if [ $# -eq 0 ]; then
+                die '--repo requires an argument.'
+            fi
+            arg_repo="$1"
+            shift
+            ;;
+        --generation)
+            shift
+            if [ $# -eq 0 ]; then
+                die '--generation requires an argument.'
+            fi
+            arg_generation="$1"
+            shift
             ;;
         -*)
             die "unknown option $1"
@@ -141,7 +172,6 @@ argparse() {
             break
             ;;
         esac
-        shift
     done
     if [ $# -ne 1 ]; then
         die "Wrong number of arguments."
@@ -160,6 +190,13 @@ argparse() {
         die "Invalid argument \`$1\`."
         ;;
     esac
+    if [ -z "${arg_repo}" ] && [ -z "${arg_generation}" ]; then
+        true
+    elif [ -n "${arg_repo}" ] && [ -n "${arg_generation}" ]; then
+        true
+    else
+        die "--repo and --generation must be used together."
+    fi
 }
 
 main "$@"
