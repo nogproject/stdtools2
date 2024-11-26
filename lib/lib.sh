@@ -82,8 +82,8 @@ expectedLfsStandaloneTransferSshSemver='0.4.0'
 # Parameters that control `foreachAlternateCandidate`.
 #
 # `timelessYears` contains a few recent year.
-# Update in 2025 to '2022 2023 2024 2025'.
-timelessYears='2021 2022 2023 2024'
+# Update in 2026 to '2023 2024 2025 2026'.
+timelessYears='2022 2023 2024 2025'
 # `activeCiRepos` lists the previous and the current CI repo.  CI is not
 # supported by stdtools2.
 activeCiRepos=
@@ -100,7 +100,7 @@ cfg_stdtoolsYear() {
         die "Configure the current year with: git config --global stdtools.currentYear ${y}"
     fi
     case ${y} in
-    2019|2020|2021|2022|2023|2024)
+    2019|2020|2021|2022|2023|2024|2025)
         true
         ;;
     *)
@@ -805,7 +805,7 @@ ergxRepoFullname='
     ^(
         201[345] (-(0[1-9]|1[0-2]))? _ [a-zA-Z0-9-]+ _ [a-zA-Z0-9-]+
         |
-        [a-zA-Z0-9-]+ _ [a-zA-Z0-9-]+ _ (201[6-9]|202[0-4]) (-(0[1-9]|1[0-2]))?
+        [a-zA-Z0-9-]+ _ [a-zA-Z0-9-]+ _ (201[6-9]|202[0-5]) (-(0[1-9]|1[0-2]))?
         |
         [a-zA-Z][a-zA-Z0-9-]* _ [a-zA-Z][a-zA-Z0-9-]*
     )$
@@ -821,7 +821,7 @@ isValidRepoFullname() {
 }
 
 isValidDate() {
-    local ergx='^(201[3-9]|202[0-4])(-(0[1-9]|1[0-2]))?$'
+    local ergx='^(201[3-9]|202[0-5])(-(0[1-9]|1[0-2]))?$'
     egrep -q "${ergx}" <<<"$1"
 }
 
@@ -852,7 +852,7 @@ ergxStd2FullnameYear='
     -
     [a-zA-Z][a-zA-Z0-9]+
     -
-    202[1-4]
+    202[1-5]
     $
 '
 ergxStd2FullnameYear="$(tr -d ' \n' <<<"${ergxStd2FullnameYear}")"
@@ -876,7 +876,7 @@ ergxStd2FullnameMonth='
     -
     [a-zA-Z][a-zA-Z0-9]+
     -
-    202[1-4]-(0[1-9]|1[0-2])
+    202[1-5]-(0[1-9]|1[0-2])
     $
 '
 ergxStd2FullnameMonth="$(tr -d ' \n' <<<"${ergxStd2FullnameMonth}")"
