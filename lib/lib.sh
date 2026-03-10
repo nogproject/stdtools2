@@ -839,8 +839,10 @@ isWellformedProjectName() {
 ergxStd2FullnameTimeless='
     ^
     [a-zA-Z][a-zA-Z0-9]+
-    -
-    [a-zA-Z][a-zA-Z0-9]+
+    (
+        -
+        [a-zA-Z][a-zA-Z0-9]+
+    )+
     $
 '
 ergxStd2FullnameTimeless="$(tr -d ' \n' <<<"${ergxStd2FullnameTimeless}")"
@@ -849,8 +851,10 @@ ergxStd2FullnameTimeless="$(tr -d ' \n' <<<"${ergxStd2FullnameTimeless}")"
 ergxStd2FullnameYear='
     ^
     [a-zA-Z][a-zA-Z0-9]+
-    -
-    [a-zA-Z][a-zA-Z0-9]+
+    (
+        -
+        [a-zA-Z][a-zA-Z0-9]+
+    )+
     -
     202[1-6]
     $
@@ -861,8 +865,10 @@ ergxStd2FullnameYear="$(tr -d ' \n' <<<"${ergxStd2FullnameYear}")"
 ergxStd2FullnameAnyYear='
     ^
     [a-zA-Z][a-zA-Z0-9]+
-    -
-    [a-zA-Z][a-zA-Z0-9]+
+    (
+        -
+        [a-zA-Z][a-zA-Z0-9]+
+    )+
     -
     [0-9][0-9][0-9][0-9]
     $
@@ -873,8 +879,10 @@ ergxStd2FullnameAnyYear="$(tr -d ' \n' <<<"${ergxStd2FullnameAnyYear}")"
 ergxStd2FullnameMonth='
     ^
     [a-zA-Z][a-zA-Z0-9]+
-    -
-    [a-zA-Z][a-zA-Z0-9]+
+    (
+        -
+        [a-zA-Z][a-zA-Z0-9]+
+    )+
     -
     202[1-6]-(0[1-9]|1[0-2])
     $
@@ -885,8 +893,10 @@ ergxStd2FullnameMonth="$(tr -d ' \n' <<<"${ergxStd2FullnameMonth}")"
 ergxStd2FullnameAnyMonth='
     ^
     [a-zA-Z][a-zA-Z0-9]+
-    -
-    [a-zA-Z][a-zA-Z0-9]+
+    (
+        -
+        [a-zA-Z][a-zA-Z0-9]+
+    )+
     -
     [0-9][0-9][0-9][1-1]-[0-9][0-9]
     $
