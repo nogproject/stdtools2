@@ -113,7 +113,7 @@ main() {
             die "Failed to determine <repo> from current directory."
         fi
         read _ _ date _ <<<"$(parseRepoName ${repo})"
-        generation=date
+        generation="${date}"
     fi
 
     cat "${vmd}" \
